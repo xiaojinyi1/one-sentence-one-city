@@ -7,6 +7,9 @@
 - 零外部资源：没有模型文件、没有图片、没有字体、没有联网 API、没有分词库
 - 全程序化：立面、窗光、地面、天色都在浏览器里现算
 
+线上：<https://xiaojinyi1.github.io/one-sentence-one-city/>
+（推 `main` 后由 `.github/workflows/deploy.yml` 自动构建并发布到 GitHub Pages）
+
 ## 运行
 
 ```bash
