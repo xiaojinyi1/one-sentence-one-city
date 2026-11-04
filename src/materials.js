@@ -3,6 +3,7 @@
 // 立面纹理由 canvas 现场画出来，不加载任何外部图片。
 
 import * as THREE from 'three';
+import { PALETTE, UNITS } from './constants.js';
 
 const TILE = 64;
 
@@ -12,22 +13,23 @@ export function createFacadeTexture() {
   canvas.height = TILE;
   const ctx = canvas.getContext('2d');
 
-  // 一格的立面：墙是中性灰，窗接近纯白 —— 亮度差被 shader 当作窗光遮罩
-  ctx.fillStyle = 'rgb(140,140,140)';
+  // 一格的立面：墙是浅灰、窗接近纯白 —— 亮度差被 shader 当作窗光遮罩。
+  // 墙不能太暗：这张图还要乘上 instanceColor 的墙色，暗了整栋楼会发黑。
+  ctx.fillStyle = 'rgb(215,215,215)';
   ctx.fillRect(0, 0, TILE, TILE);
 
-  ctx.fillStyle = 'rgb(120,120,120)';
+  ctx.fillStyle = 'rgb(170,170,170)';
   ctx.fillRect(0, 0, TILE, 3);
   ctx.fillRect(0, TILE - 4, TILE, 4);
 
-  ctx.fillStyle = 'rgb(248,246,240)';
+  ctx.fillStyle = 'rgb(255,252,246)';
   ctx.fillRect(18, 15, 28, 34);
 
   ctx.fillStyle = 'rgb(196,192,184)';
   ctx.fillRect(31, 15, 2, 34);
   ctx.fillRect(18, 31, 28, 2);
 
-  ctx.fillStyle = 'rgb(110,110,110)';
+  ctx.fillStyle = 'rgb(150,150,150)';
   ctx.fillRect(16, 49, 32, 2);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -75,11 +77,13 @@ function attachGlow(material, hasMap) {
       );
 
     if (hasMap) {
+      // 窗光遮罩取自「贴图原色」，不能取已经乘过 instanceColor 的 diffuseColor：
+      // 否则墙色越深，窗户越不容易过阈值，整栋楼的窗光会被墙色拖没。
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-        float luma = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-        float winMask = smoothstep(0.72, 0.92, luma) * (1.0 - vRoof);
+        float rawLuma = dot(texture2D(map, vMapUv).rgb, vec3(0.299, 0.587, 0.114));
+        float winMask = smoothstep(0.72, 0.92, rawLuma) * (1.0 - vRoof);
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.6, vRoof);
         totalEmissiveRadiance *= winMask;`
       );
@@ -137,4 +141,28 @@ export function ensureInstanceAttributes(geometry, count) {
     geometry.setAttribute('aUvScale', uv);
   }
   return geometry;
+}
+
+// SECTION: sky
+// 三套天色落到材质层：雨夜把商业立面往霓虹色推、并把窗光调亮；
+// 清晨压暗窗光，黄昏居中。只调共享材质的参数，不新建材质（第 7.3 节）。
+const SKY_MOOD = {
+  dusk: { window: 1.05, neon: UNITS.neonDusk, beam: 0.26 },
+  night: { window: 1.55, neon: UNITS.neonNight, beam: 0.4 },
+  morning: { window: 0.5, neon: UNITS.neonMorning, beam: 0.16 }
+};
+
+export function applySkyMood(kit, skyKey) {
+  const mood = SKY_MOOD[skyKey] || SKY_MOOD.dusk;
+
+  kit.residential.emissive.set(PALETTE.residential.window);
+  kit.residential.emissiveIntensity = mood.window;
+
+  const cold = new THREE.Color(PALETTE.commercial.window);
+  const neon = new THREE.Color(PALETTE.commercial.neon);
+  kit.commercial.emissive.copy(cold).lerp(neon, skyKey === 'night' ? 0.62 : skyKey === 'dusk' ? 0.34 : 0.1);
+  kit.commercial.emissiveIntensity = mood.window * 0.95;
+
+  kit.beam.opacity = mood.beam;
+  return mood;
 }

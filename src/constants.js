@@ -50,9 +50,9 @@ export const UNITS = {
   floorsFreq3: [8, 20],
   landmarkScale: 1.8,
   landmarkFootprint: 1.15,
-  beamHeightScale: 4.2,
-  beamRadiusTop: 0.06,
-  beamRadiusBottom: 0.3,
+  beamHeightScale: 2.6,
+  beamRadiusTop: 0.05,
+  beamRadiusBottom: 0.18,
 
   // 标点（R3）
   plazaRadius: 1.7,
@@ -118,17 +118,40 @@ export const UNITS = {
   floorScaleNarrow: 1.35,
   floorScaleWide: 0.62,
 
+  // 第二轮：升起动画 / 接触阴影 / 浮尘 / 雨夜湿地 / 霓虹
+  riseMin: 0.5,
+  riseMax: 0.7,
+  riseStaggerMin: 0.008,
+  riseStaggerMax: 0.02,
+  contactShadowOpacity: 0.35,
+  contactShadowScale: 1.55,
+  dustSize: 0.075,
+  dustOpacity: 0.4,
+  dustHeight: 4.4,
+  dustSpread: 0.92,
+  wetRoughness: 0.24,
+  wetMetalness: 0.26,
+  neonNight: 0.9,
+  neonDusk: 0.34,
+  neonMorning: 0.06,
+  shadowSpanScale: 1.15,
+  landmarkLightRange: 2.8,
+  debugPlaneLift: 0.08,
+
   // 预算与渲染
   instanceCap: 3000,
   dustMax: 200,
   cameraFov: 45,
-  cameraDist: 1.85,
-  cameraHeight: 1.25,
+  cameraDist: 0.95,
+  cameraHeight: 0.5,
   cameraTarget: 0.9,
   minPolar: 0.15 * Math.PI,
   maxPolar: 0.48 * Math.PI,
   autoRotateDelay: 6000,
   autoRotateSpeed: 0.2,
+  // 第 9 节：极角限制 [0.15π, 0.48π] —— 不许看到天空正上方，也不许贴地
+  minPolarAngle: Math.PI * 0.15,
+  maxPolarAngle: Math.PI * 0.48,
   shadowDesktop: 2048,
   shadowMobile: 1024,
   maxPixelRatio: 2,
@@ -136,11 +159,15 @@ export const UNITS = {
   shadowBias: -0.0004,
   lightIntensity: 1.1,
   ambientIntensity: 0.28,
-  landmarkLightIntensity: 26,
-  fogNearScale: 0.9,
-  fogFarScale: 2.6,
-  skyRadiusScale: 3.2,
-  groundScale: 2.6,
+  // three 0.160 默认物理正确光强：点光按 candela 计，irradiance = intensity / d²，
+  // 所以这盏地标补光的数值要比直觉大一档（26 基本看不见，60 才在地标脚下压出暖色）。
+  landmarkLightIntensity: 20,
+  // 地面一直画到 radius * groundScale，雾在 groundScale 之前就把地面吃掉：
+  // 两者对齐，地面平面的外沿就不会在地平线上留一条硬边。
+  fogNearScale: 0.95,
+  fogFarScale: 2.2,
+  skyRadiusScale: 3.0,
+  groundScale: 2.2,
   groundTextureSize: 1024
 };
 
@@ -148,11 +175,11 @@ export const UNITS = {
 export const PALETTE = {
   ui: { bg: '#0c0d11', text: '#f6f3ea', dim: '#9a968c' },
   accent: '#e8b04b',
-  ground: '#12141a',
-  groundDeep: '#0a0c11',
-  road: '#24272f',
+  ground: '#31353e',
+  groundDeep: '#262a32',
+  road: '#3a3e48',
   roadWear: 'rgba(255, 236, 200, 0.05)',
-  plazaStone: '#2f2c2a',
+  plazaStone: '#5b544a',
   residential: {
     wall: '#cdbca4',
     window: '#ffd9a0',

@@ -23,9 +23,10 @@ export function createLights(cityPlan, options) {
 
   const sun = new THREE.DirectionalLight(new THREE.Color(palette.sun), UNITS.lightIntensity);
   sun.position.set(radius * 0.85, radius * 1.5, radius * 0.7);
-  sun.castShadow = true;
+  sun.castShadow = !opts.lowEnd;
 
-  const shadowSpan = radius * 1.4;
+  // 视锥收紧到城区（第 10 节）：只包住半径外扩一点点，阴影分辨率才够用
+  const shadowSpan = radius * UNITS.shadowSpanScale;
   sun.shadow.camera.left = -shadowSpan;
   sun.shadow.camera.right = shadowSpan;
   sun.shadow.camera.top = shadowSpan;

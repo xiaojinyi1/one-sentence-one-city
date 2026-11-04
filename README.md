@@ -31,41 +31,45 @@ src/rules.js        第 4 节 R1–R8，只做「特征 → 参数」
 src/layout.js       地块网格、分区、占位判定
 src/plan.js         生成 CityPlan（可 JSON 化的纯数据）
 src/build.js        CityPlan → InstancedMesh，只读 plan
-src/materials.js    立面 canvas 贴图 + instanceColor + aGlow 自定义属性
-src/ground.js       地面 canvas 贴图（主干道、斑马线、广场、港区）
+src/materials.js    立面 canvas 贴图 + instanceColor + aGlow 自定义属性 + 三套天色的材质情绪
+src/ground.js       地面 canvas 贴图（主干道、斑马线、广场、港区、接触阴影、雨夜水痕）
 src/sky.js          按 R6 的三种天色做渐变天球
-src/lights.js       基础灯光（日光 + 天空光 + 背光）
-src/scene.js        渲染器 / 相机 / OrbitControls
-src/rebuild.js      输入变化时的清场与重建
-src/ui.js           输入框、示例、状态、分享、调试面板
-src/selfcheck.js    第 5.3 节覆盖自检（D 键打开调试面板）
+src/lights.js       灯光（日光 + 天空光 + 背光 + 阴影）
+src/dust.js         浮尘粒子（≤200，随 seed 固定分布）
+src/debugview.js    F 线框视图下的地块网格与分区标注
+src/scene.js        渲染器 / 相机 / OrbitControls / 环境贴图（从天空球现做）
+src/rebuild.js      输入变化时的清场、重建、错峰升起
+src/ui.js           输入框、示例、状态、分享、导出、调试面板
+src/selfcheck.js    第 5.5 节断言表（D 键打开调试面板）
 src/fallback.js     WebGL 不可用时的说明页 + 映射规则表
+selftest.mjs        命令行跑同一套断言，不需要浏览器（npm run selftest）
 ```
 
 ## 调试
 
-- `D` 打开调试面板：第 5.3 节自检结果、seed、半径、天色、楼数、港区数量、drawcall
-- `F` 线框
-- `/` 聚焦输入框
-- `R` 随机换一个示例
+- `D` 打开读数面板：5.5 断言逐条结果、命中明细（词 / 权重 / 累计）、补词数组、seed、半径、
+  天色、形态、港区数量、规则触发与省略、drawcall
+- `F` 线框视图：地块网格 + 分区色块 + 文字标注
+- `/` 聚焦输入框，`R` 随机换一个示例，`Esc` 关掉说明
+- 「保存图片」导出带句子角标的 PNG；「CityPlan JSON」导出可复现的纯数据
 - 分享链接带 `?t=句子`，打开就是同一座城
 
-## 第一轮范围
+## 第二轮范围
 
-第 18 节「第一轮」只做地基，不做第二轮（无分享卡片、无雨、无鸟、无音效）：
+第 18 节「第二轮」把第一轮的方块城做成能看的一帧，仍然只有 `three` 一个依赖，
+没有引入任何 glb / 贴图 / 字体 / 音频资源：
 
 | 项 | 状态 |
 | --- | --- |
-| tokenizer（URL / ASCII / 数字 / 最长匹配 / 二字滑窗 / 单字 / emoji） | 已完成 |
-| 第 5 节词表 94 条 + 极性表 + 5.3 覆盖自检 | 已完成，自检 16 项 |
-| 特征提取（词频、平均词长、标点、情绪、哈希） | 已完成 |
-| FNV-1a + mulberry32 种子 | 已完成 |
-| R1–R8 全部映射规则 | 已完成 |
-| `plan()` / `build()` 分离（CityPlan 可 JSON 化） | 已完成 |
-| InstancedMesh 建筑、五组几何、总 drawcall 12 | 已完成 |
-| 基础灯光、天空、地面、OrbitControls | 已完成 |
-| 输入即重建（300ms debounce）+ 冷启动 | 已完成 |
-| WebGL 不可用时的说明页 + 映射表 | 已完成 |
+| 窗光：instanceColor + `aGlow` 自定义 emissive 属性，不逐栋建材质（7.3） | 已完成 |
+| 三套天色落到实际渲染：清晨灰白、黄昏金、雨夜蓝紫；雨夜湿反射 + 商业霓虹 | 已完成 |
+| DirectionalLight 真阴影（桌面 2048 / 移动 1024，视锥收紧到城区）+ 环境光 + 地标补光 | 已完成 |
+| 每栋楼底部径向渐变接触阴影（烘进地面贴图，不额外 drawcall） | 已完成 |
+| 浮尘 ≤200，随 seed 固定分布，reduced-motion 时关闭 | 已完成 |
+| 升起动画：单栋 0.5~0.7s，8~20ms 错峰，按距地标远近排序（参数在 UNITS） | 已完成 |
+| `?t=` 可复现 + `preserveDrawingBuffer` + 带句子角标的 PNG 下载 + CityPlan JSON | 已完成 |
+| D 读数面板 / F 线框地块视图 / 第 14 节文案 / reduced-motion / 移动端降级 | 已完成 |
+| WebGL 不可用时的文字映射表说明页 | 已完成 |
 
 ## 验证
 

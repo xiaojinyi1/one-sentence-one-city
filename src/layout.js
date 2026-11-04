@@ -44,6 +44,43 @@ export function sortByDistance(slots, centerX, centerZ) {
   });
 }
 
+// 街区里只放几栋楼时，从中心往外排会挤成一团；改用「最远点采样」把它们摊开，
+// 让半座城真的铺满半边，而不是在地标旁边堆一小撮。
+export function spreadOrder(slots, centerX, centerZ) {
+  if (slots.length <= 1) return slots.slice();
+
+  const remaining = slots.slice().sort((a, b) => {
+    const da = (a.x - centerX) * (a.x - centerX) + (a.z - centerZ) * (a.z - centerZ);
+    const db = (b.x - centerX) * (b.x - centerX) + (b.z - centerZ) * (b.z - centerZ);
+    if (da !== db) return da - db;
+    if (a.z !== b.z) return a.z - b.z;
+    return a.x - b.x;
+  });
+
+  const picked = [remaining.shift()];
+  while (remaining.length) {
+    let bestIndex = 0;
+    let bestScore = -1;
+    for (let i = 0; i < remaining.length; i += 1) {
+      const candidate = remaining[i];
+      let nearest = Infinity;
+      for (let p = 0; p < picked.length; p += 1) {
+        const dx = picked[p].x - candidate.x;
+        const dz = picked[p].z - candidate.z;
+        const distance = dx * dx + dz * dz;
+        if (distance < nearest) nearest = distance;
+      }
+      if (nearest > bestScore) {
+        bestScore = nearest;
+        bestIndex = i;
+      }
+    }
+    picked.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return picked;
+}
+
 // 特殊地物占地：楼不允许压在这些东西上
 export function makeBlocker(zones) {
   const circles = zones.circles || [];

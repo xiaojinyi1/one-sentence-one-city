@@ -83,7 +83,7 @@ body {
 .composer {
   position: absolute;
   left: 50%;
-  bottom: 108px;
+  bottom: calc(108px + var(--kb, 0px));
   transform: translateX(-50%);
   width: min(92vw, 560px);
   display: flex;
@@ -131,8 +131,8 @@ body {
 
 .go {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border: 1px solid rgba(232, 176, 75, 0.4);
@@ -284,24 +284,65 @@ body {
 }
 
 /* ---------- 调试面板 ---------- */
+/* display:flex 会盖掉 [hidden] 的默认 display:none，所以要显式写一条 */
+.debug[hidden] {
+  display: none;
+}
+
 .debug {
   position: absolute;
   top: 96px;
   right: 24px;
   width: min(38vw, 360px);
   max-height: 62vh;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   margin: 0;
-  padding: 14px 16px;
+  padding: 12px 14px 10px;
   background: rgba(6, 7, 10, 0.82);
   border: 1px solid var(--line);
   border-radius: 10px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11.5px;
   line-height: 1.7;
-  white-space: pre-wrap;
   color: rgba(246, 243, 234, 0.8);
   z-index: 6;
+}
+
+.debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.debug-title {
+  color: var(--accent);
+  letter-spacing: 0.12em;
+}
+
+.debug-export {
+  padding: 4px 8px;
+  border: 1px solid rgba(232, 176, 75, 0.32);
+  border-radius: 6px;
+  color: rgba(232, 176, 75, 0.9);
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.debug-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 /* ---------- 说明 ---------- */
@@ -446,8 +487,19 @@ body {
     padding: 18px 18px;
   }
 
+  /* 第 15 节：触控目标不小于 44×44 */
+  .link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .chip {
+    min-height: 44px;
+  }
+
   .composer {
-    bottom: 92px;
+    bottom: calc(92px + var(--kb, 0px));
     width: calc(100vw - 28px);
   }
 
@@ -489,6 +541,19 @@ body {
     width: calc(100vw - 24px);
     max-height: 52vh;
   }
+
+  .debug .link {
+    min-height: 0;
+  }
+}
+
+/* 第 15 节：系统开启「减少动态效果」时，界面过渡与升起动画一起关掉 */
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

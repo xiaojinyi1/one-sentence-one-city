@@ -26,6 +26,7 @@ const SHELL = `
   <footer class="hud hud-bottom">
     <div class="bottom-left">
       <button class="link" type="button" data-action="share">分享这座城</button>
+      <button class="link" type="button" data-action="export" aria-label="下载这座城的图片">保存图片</button>
       <button class="link" type="button" data-action="about">这座城是怎么长出来的</button>
     </div>
     <div class="bottom-right">
@@ -36,7 +37,13 @@ const SHELL = `
 
   <p class="keys">${UI_COPY.keyHints}</p>
 
-  <aside class="debug" hidden aria-label="调试读数"></aside>
+  <aside class="debug" hidden aria-label="调试读数">
+    <div class="debug-head">
+      <span class="debug-title">读数 · D</span>
+      <button class="link debug-export" type="button" data-action="plan-json" aria-label="导出 CityPlan JSON">CityPlan JSON</button>
+    </div>
+    <pre class="debug-body"></pre>
+  </aside>
   <section class="about" hidden aria-label="${UI_COPY.aboutTitle}">
     <h2>${UI_COPY.aboutTitle}</h2>
     <p></p>
@@ -62,9 +69,15 @@ export function createUI(app, handlers) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip';
-    chip.innerHTML = '<span class="chip-label"></span><span class="chip-text"></span>';
-    chip.querySelector('.chip-label').textContent = example.label;
-    chip.querySelector('.chip-text').textContent = example.text;
+    // 第 16 节：动态值一律用 createElement + textContent，不拼 HTML 字符串
+    const chipLabel = document.createElement('span');
+    chipLabel.className = 'chip-label';
+    chipLabel.textContent = example.label;
+    const chipText = document.createElement('span');
+    chipText.className = 'chip-text';
+    chipText.textContent = example.text;
+    chip.appendChild(chipLabel);
+    chip.appendChild(chipText);
     chip.addEventListener('click', () => {
       input.value = example.text;
       if (h.onExample) h.onExample(example.text);
@@ -83,9 +96,23 @@ export function createUI(app, handlers) {
     if (!action) return;
     const name = action.getAttribute('data-action');
     if (name === 'share' && h.onShare) h.onShare();
+    if (name === 'export' && h.onExport) h.onExport();
+    if (name === 'plan-json' && h.onPlanJson) h.onPlanJson();
     if (name === 'about') about.hidden = !about.hidden;
     if (name === 'about-close') about.hidden = true;
   });
+
+  // 第 9 节：移动端键盘弹起不得遮挡城市主体 —— 用量出来的键盘高度把输入条顶上去
+  if (window.visualViewport) {
+    const viewport = window.visualViewport;
+    const fit = () => {
+      const gap = Math.max(0, window.innerHeight - viewport.height);
+      app.style.setProperty('--kb', `${Math.round(gap)}px`);
+    };
+    viewport.addEventListener('resize', fit);
+    viewport.addEventListener('scroll', fit);
+    fit();
+  }
 
   window.addEventListener('keydown', (event) => {
     const typing = event.target === input;
@@ -101,7 +128,9 @@ export function createUI(app, handlers) {
       if (next) next.click();
     }
     if (event.key === 'f' || event.key === 'F') {
+      // 第 13 节：F 同时切线框与「地块/分区」叠加层，两个视图一起看
       if (h.onWireframe) h.onWireframe();
+      if (h.onDebugView) h.onDebugView();
     }
     if (event.key === 'd' || event.key === 'D') {
       debug.hidden = !debug.hidden;
@@ -115,8 +144,12 @@ export function createUI(app, handlers) {
     status.dataset.kind = kind || '';
   }
 
+  const debugBody = debug.querySelector('.debug-body');
+
   function setDebug(text) {
-    debug.textContent = text;
+    if (!debugBody) return;
+    debugBody.textContent = text || '';
+    if (!debug.hidden) debugBody.scrollTop = 0;
   }
 
   function setBusy(busy) {

@@ -21,39 +21,45 @@ export function createGround(cityPlan) {
   const ctx = canvas.getContext('2d');
   const rng = createRng(cityPlan.seed ^ 0x1f3d5b);
 
-  // 城外深，城内亮
-  ctx.fillStyle = PALETTE.groundDeep;
+  // 城外深、城内亮。整张画布一起渐变（不是画一个圆盘），
+  // 这样可见的地面不会出现「亮圆盘 / 暗外围」的硬边。
+  ctx.fillStyle = '#4a4e57';
   ctx.fillRect(0, 0, size, size);
 
-  const disc = ctx.createRadialGradient(center, center, radius * scale * 0.15, center, center, radius * scale * 1.15);
-  disc.addColorStop(0, '#1b1e26');
-  disc.addColorStop(0.62, '#15171d');
-  disc.addColorStop(1, PALETTE.groundDeep);
+  const disc = ctx.createRadialGradient(center, center, 0, center, center, radius * scale * UNITS.groundScale);
+  disc.addColorStop(0, '#8a8e97');
+  disc.addColorStop(0.45, '#666a74');
+  disc.addColorStop(0.78, '#51555f');
+  disc.addColorStop(1, '#4a4e57');
   ctx.fillStyle = disc;
-  ctx.beginPath();
-  ctx.arc(center, center, radius * scale * 1.15, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.fillRect(0, 0, size, size);
 
-  // 港区：城南深色沥青域，与住宅区之间靠一条横路分开
+  // 港区：只有句子里真的出现数字 / 网址时才有沥青域（R7），
+  // 否则空着一大片深色地面，看上去像地上的阴影。
+  const hasPort = cityPlan.wharves.length > 0;
   const portTop = toY(cityPlan.avenue.portStart);
-  ctx.fillStyle = '#101219';
-  ctx.fillRect(toX(-radius * 0.95), portTop, radius * 1.9 * scale, (radius * 0.95) * scale);
+  if (hasPort) {
+    ctx.fillStyle = '#565a64';
+    ctx.fillRect(toX(-radius * 0.95), portTop, radius * 1.9 * scale, (radius * 0.95) * scale);
+  }
 
-  // 主干道（沿南北）
+  // 主干道（沿南北）—— 比地面略亮，才看得出是一条路
   const avenueWidth = cityPlan.avenue.half * 2;
-  ctx.fillStyle = PALETTE.road;
+  ctx.fillStyle = '#8f949e';
   ctx.fillRect(toX(-cityPlan.avenue.half), toY(-radius), avenueWidth * scale, (radius + cityPlan.avenue.portStart) * scale);
 
   // 港区横向分隔路
   const portRoadZ = cityPlan.avenue.portStart - UNITS.plotGap * 2;
-  ctx.fillStyle = PALETTE.road;
-  ctx.fillRect(toX(-radius * 0.9), toY(portRoadZ), radius * 1.8 * scale, 0.9 * scale);
+  if (hasPort) {
+    ctx.fillStyle = '#8f949e';
+    ctx.fillRect(toX(-radius * 0.9), toY(portRoadZ), radius * 1.8 * scale, 0.9 * scale);
+  }
 
   // 句号断口 + 斑马线
   cityPlan.roadGaps.forEach((gap) => {
     const gapY = toY(gap.z);
     const gapH = gap.width * scale;
-    ctx.fillStyle = '#191b22';
+    ctx.fillStyle = '#a3a8b2';
     ctx.fillRect(toX(-cityPlan.avenue.half), gapY - gapH / 2, avenueWidth * scale, gapH);
 
     const stripes = gap.stripes;
@@ -64,18 +70,73 @@ export function createGround(cityPlan) {
     }
   });
 
-  // 广场石面
+  // 广场石面：比地坪亮一点，才像铺出来的石板，而不是地上一个洞
   cityPlan.plazas.forEach((plaza) => {
-    ctx.fillStyle = PALETTE.plazaStone;
+    ctx.fillStyle = '#a6aab2';
     ctx.beginPath();
     ctx.arc(toX(plaza.x), toY(plaza.z), plaza.radius * scale, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(240, 225, 195, 0.16)';
-    ctx.lineWidth = Math.max(1, 0.05 * scale);
+    ctx.strokeStyle = 'rgba(70, 66, 60, 0.35)';
+    ctx.lineWidth = Math.max(1, 0.04 * scale);
     ctx.beginPath();
-    ctx.arc(toX(plaza.x), toY(plaza.z), plaza.radius * 0.84 * scale, 0, Math.PI * 2);
+    ctx.arc(toX(plaza.x), toY(plaza.z), plaza.radius * 0.9 * scale, 0, Math.PI * 2);
     ctx.stroke();
   });
+
+  // 接触阴影：每栋楼底部一圈 CanvasTexture 径向渐变（第 10 节，opacity 0.35）。
+  // 烘进地面贴图而不是单独一张贴图物件，是为了守住 drawcall ≤12 的预算。
+  const shadowAlpha = cityPlan.sky.key === 'morning' ? UNITS.contactShadowOpacity * 0.7 : UNITS.contactShadowOpacity;
+  const contactPoints = []
+    .concat(
+      cityPlan.units.map((unit) => ({
+        x: unit.position[0],
+        z: unit.position[2],
+        r: Math.max(unit.baseFootprint[0], unit.baseFootprint[2]) * UNITS.contactShadowScale
+      }))
+    )
+    .concat([
+      {
+        x: cityPlan.landmark.position[0],
+        z: cityPlan.landmark.position[2],
+        r: cityPlan.landmark.footprint * UNITS.contactShadowScale * 1.2
+      }
+    ])
+    .concat(
+      cityPlan.wharves.map((item) => ({
+        x: item.position[0],
+        z: item.position[2],
+        r: (item.radius ? item.radius * 2 : Math.max(item.size[0], item.size[2])) * UNITS.contactShadowScale
+      }))
+    );
+
+  contactPoints.forEach((point) => {
+    const cx = toX(point.x);
+    const cy = toY(point.z);
+    const r = Math.max(2, point.r * 0.5 * scale);
+    const shade = ctx.createRadialGradient(cx, cy, r * 0.18, cx, cy, r);
+    shade.addColorStop(0, `rgba(0, 0, 0, ${shadowAlpha})`);
+    shade.addColorStop(0.55, `rgba(0, 0, 0, ${shadowAlpha * 0.45})`);
+    shade.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = shade;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // 雨夜：路面湿反射靠画几道冷光水痕强化（材质上再把 roughness 压下去）
+  if (cityPlan.sky.key === 'night') {
+    for (let i = 0; i < 26; i += 1) {
+      const x = toX(rng.range(-cityPlan.avenue.half, cityPlan.avenue.half));
+      const y = toY(rng.range(-cityPlan.radius * 0.9, cityPlan.radius * 0.4));
+      const w = rng.range(2, 9);
+      const h = rng.range(20, 70);
+      const streak = ctx.createLinearGradient(x, y, x, y + h);
+      streak.addColorStop(0, 'rgba(150, 190, 255, 0.16)');
+      streak.addColorStop(1, 'rgba(150, 190, 255, 0)');
+      ctx.fillStyle = streak;
+      ctx.fillRect(x, y, w, h);
+    }
+  }
 
   // 街道肌理：细噪点，避免大面积纯色
   const dots = 5200;
@@ -98,14 +159,18 @@ export function createGround(cityPlan) {
   const geometry = new THREE.PlaneGeometry(worldSize, worldSize);
   geometry.rotateX(-Math.PI / 2);
 
+  // 地面底色跟天色走：贴图是中性灰，颜色靠 tint 乘上去（不引外部贴图）
   const tint = new THREE.Color(PALETTE.sky[cityPlan.sky.key].ground || '#101218');
-  tint.lerp(new THREE.Color('#ffffff'), 0.62);
+  tint.lerp(new THREE.Color('#ffffff'), 0.5);
+
+  // 雨夜档：地面 roughness 压低做湿反射，metalness 略抬，不引任何后期处理
+  const wet = cityPlan.sky.key === 'night';
 
   const material = new THREE.MeshStandardMaterial({
     map: texture,
     color: tint,
-    roughness: 0.96,
-    metalness: 0.02
+    roughness: wet ? UNITS.wetRoughness : 0.96,
+    metalness: wet ? UNITS.wetMetalness : 0.02
   });
 
   const mesh = new THREE.Mesh(geometry, material);

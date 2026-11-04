@@ -12,6 +12,7 @@ export function createSky(cityPlan, radius) {
   const top = new THREE.Color(palette.top);
   const bottom = new THREE.Color(palette.bottom);
   const sun = new THREE.Color(palette.sun);
+  const fog = new THREE.Color(palette.fog);
   const position = geometry.getAttribute('position');
   const colors = new Float32Array(position.count * 3);
   const color = new THREE.Color();
@@ -25,6 +26,13 @@ export function createSky(cityPlan, radius) {
     // 地平线附近一点暖意
     const horizon = 1 - Math.min(1, Math.abs(vertex.y) / 0.34);
     if (horizon > 0) color.lerp(sun, horizon * 0.12);
+
+    // 地平线两侧都往雾色靠：远处地面被雾吃成雾色，接不上就是一道硬线
+    const seam = 1 - Math.min(1, Math.abs(vertex.y) / 0.18);
+    if (seam > 0) color.lerp(fog, seam * 0.75);
+
+    // 地平线以下一律收到雾色：地面边缘与天空在远处同色，看不出接缝
+    if (vertex.y < 0) color.lerp(fog, Math.min(1, -vertex.y / 0.1));
 
     colors[i * 3] = color.r;
     colors[i * 3 + 1] = color.g;

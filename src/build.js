@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { PALETTE, UNITS } from './constants.js';
 import {
+  applySkyMood,
   createFacadeMaterial,
   createFacadeTexture,
   createPlainMaterial,
@@ -30,10 +31,12 @@ export function createCityKit() {
       roughness: PALETTE.commercial.roughness,
       metalness: PALETTE.commercial.metalness
     }),
+    // 这两个材质的实例都自带 instanceColor，材质底色必须是白：
+    // 否则底色会和实例色相乘两次（#8f959d × #8f959d ≈ 近黑）。
     metal: createPlainMaterial({
-      color: PALETTE.metal,
-      roughness: 0.42,
-      metalness: 0.55,
+      color: 0xffffff,
+      roughness: 0.55,
+      metalness: 0.25,
       emissive: '#2a2216',
       emissiveIntensity: 0.25
     }),
@@ -43,7 +46,7 @@ export function createCityKit() {
       metalness: 0.2
     }),
     plaza: createPlainMaterial({
-      color: PALETTE.plazaStone,
+      color: 0xffffff,
       roughness: 0.92,
       metalness: 0.02
     }),
@@ -148,6 +151,9 @@ export function buildCity(cityPlan, kit) {
   const group = new THREE.Group();
   group.name = 'city';
 
+  // 三套天色落到共享材质上（第 7.3：不新建材质实例，只改参数）
+  applySkyMood(kit, cityPlan.sky.key);
+
   const resUnits = cityPlan.units.filter((unit) => unit.district === 'residential');
   const comUnits = cityPlan.units.filter((unit) => unit.district === 'commercial');
   const pitchUnits = cityPlan.units.filter((unit) => unit.roofKind === 'pitch');
@@ -213,9 +219,9 @@ export function buildCity(cityPlan, kit) {
   finalize(comMesh, comUsed);
   group.add(comMesh);
 
-  // ---- 圆柱组：储罐 / 烟囱 / 喷泉 / 水箱 / 广场石盘 ----
+  // ---- 圆柱组：储罐 / 烟囱 / 喷泉 / 屋顶水箱 ----
   const cylinderCapacity =
-    tanks.length + chimneys.length + cityPlan.plazas.length * 2 + tankUnits.length;
+    tanks.length + chimneys.length + cityPlan.plazas.length + tankUnits.length;
   const cylinderMesh = createInstancedMesh(
     new THREE.CylinderGeometry(1, 1, 1, 12, 1),
     kit.metal,
@@ -225,17 +231,7 @@ export function buildCity(cityPlan, kit) {
   const metalColor = new THREE.Color(PALETTE.metal);
 
   cityPlan.plazas.forEach((plaza) => {
-    writeInstance(
-      cylinderMesh,
-      cylUsed,
-      [plaza.x, 0.03, plaza.z],
-      [plaza.radius, 0.06, plaza.radius],
-      0,
-      new THREE.Color(PALETTE.plazaStone),
-      0.06,
-      null
-    );
-    cylUsed += 1;
+    // 广场石面已经画进地面贴图（ground.js），这里只放喷泉本体
     writeInstance(
       cylinderMesh,
       cylUsed,
@@ -315,25 +311,41 @@ export function buildCity(cityPlan, kit) {
   finalize(containerMesh, containers.length);
   group.add(containerMesh);
 
-  // ---- 针：感叹号 ----
+  // ---- 针：感叹号（水箱顶上的细天线也并进这一组，几何同为细圆柱，省一次 drawcall）----
   const needleMesh = createInstancedMesh(
     new THREE.CylinderGeometry(0.09, 1, 1, 8, 1),
     kit.metal,
-    Math.max(1, cityPlan.needles.length)
+    Math.max(1, cityPlan.needles.length + tankUnits.length)
   );
-  cityPlan.needles.forEach((needle, index) => {
+  let needleUsed = 0;
+  cityPlan.needles.forEach((needle) => {
     writeInstance(
       needleMesh,
-      index,
+      needleUsed,
       [needle.x, needle.height / 2, needle.z],
       [needle.section / 2, needle.height, needle.section / 2],
       0,
-      new THREE.Color('#d9d3c6'),
+      new THREE.Color('#8f949c'),
       0.1,
       null
     );
+    needleUsed += 1;
   });
-  finalize(needleMesh, cityPlan.needles.length);
+  tankUnits.forEach((unit) => {
+    const base = unit.height + UNITS.waterTankHeight;
+    writeInstance(
+      needleMesh,
+      needleUsed,
+      [unit.position[0], base + UNITS.antennaHeight / 2, unit.position[2]],
+      [UNITS.antennaWidth, UNITS.antennaHeight, UNITS.antennaWidth],
+      0,
+      new THREE.Color('#b9b3a6'),
+      0.16,
+      null
+    );
+    needleUsed += 1;
+  });
+  finalize(needleMesh, needleUsed);
   group.add(needleMesh);
 
   // ---- 扭塔：问号 ----
@@ -374,28 +386,6 @@ export function buildCity(cityPlan, kit) {
   });
   finalize(pitchMesh, pitchUnits.length);
   group.add(pitchMesh);
-
-  // ---- 天线：水箱顶上的细杆 ----
-  const antennaMesh = createInstancedMesh(
-    new THREE.CylinderGeometry(0.5, 0.5, 1, 5, 1),
-    kit.metal,
-    Math.max(1, tankUnits.length)
-  );
-  tankUnits.forEach((unit, index) => {
-    const base = unit.height + UNITS.waterTankHeight;
-    writeInstance(
-      antennaMesh,
-      index,
-      [unit.position[0], base + UNITS.antennaHeight / 2, unit.position[2]],
-      [UNITS.antennaWidth, UNITS.antennaHeight, UNITS.antennaWidth],
-      0,
-      new THREE.Color('#b9b3a6'),
-      0.16,
-      null
-    );
-  });
-  finalize(antennaMesh, tankUnits.length);
-  group.add(antennaMesh);
 
   // ---- 引号围墙：四面矮墙围出一块引用区 ----
   const wallMesh = createInstancedMesh(new THREE.BoxGeometry(1, 1, 1), kit.plaza, Math.max(1, cityPlan.walls.length * 4));
@@ -440,11 +430,16 @@ export function buildCity(cityPlan, kit) {
   const landmarkLight = new THREE.PointLight(
     new THREE.Color(PALETTE.accent),
     UNITS.landmarkLightIntensity,
-    cityPlan.radius * 2.4,
+    cityPlan.radius * UNITS.landmarkLightRange,
     2
   );
   landmarkLight.position.set(0, landmarkHeight * 0.85, 0);
   group.add(landmarkLight);
+
+  // 升起动画要按实例逐栋做，标记一下哪些网格参与（第 10 节「升起动画」）
+  group.traverse((object) => {
+    if (object.isInstancedMesh) object.userData.rise = true;
+  });
 
   return {
     group,

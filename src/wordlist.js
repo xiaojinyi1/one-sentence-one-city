@@ -23,7 +23,7 @@ export const SEED_WORDS = [
   '中间', '重复', '唯一'
 ];
 
-// 5.2 情绪极性表（命中一次 +1 / -1，重复叠加）
+// 5.2 情绪极性表（两张表与规格逐字一致；「命中一次 ±1」的计分口径已被 5.4 覆盖）
 export const POSITIVE_WORDS = [
   '暖', '大', '亮', '光', '家', '好', '爱', '喜欢', '温暖', '明亮', '晴', '风', '海', '山',
   '花', '梦', '希望', '快乐', '安静', '自由', '相遇', '出发', '开始', '未来', '清晨',
@@ -37,20 +37,34 @@ export const NEGATIVE_WORDS = [
   '加班', '会议', '报错', '崩溃', '卡死', '失败', '落后', '压力', '内耗', '失眠',
   '早高峰', '堵车', '拥挤', '废弃', '沉默'
 ];
-// 5.2 原表一字不改，补词单列。依据 PROMOTE.md 第 80–81 行：
-// 「任何示例句的预期天色或建筑类型与实际不符时，补词表或改规则分支，禁止改句子文案。」
-// 示例「我恨上班！！！」的 label 是「今天很不爽」，需要 -2 档雨夜，而 5.2 原表里
-// 没有任何词命中「上班」（「上班」在 5.1 切词表里），故补这一个负面词。
-// 补词条数会打进调试面板的自检里，删掉这一行就回到「-1 分 → 清晨」。
-export const POLARITY_SUPPLEMENT = ['上班'];
+// 5.4 情绪权重（覆盖 5.2 的「命中一次 ±1」口径，以本节为准）
+// 强正面词 +2：爱 希望 温暖 明亮 自由 梦
+export const STRONG_POSITIVE_WORDS = ['爱', '希望', '温暖', '明亮', '自由', '梦'];
+// 强负面词 -2：恨 哭 不爽 崩溃 卡死 报错 内耗 失眠 熬 卷
+export const STRONG_NEGATIVE_WORDS = ['恨', '哭', '不爽', '崩溃', '卡死', '报错', '内耗', '失眠', '熬', '卷'];
+
+// 5.4 补丁纪律 P2：先前为「我恨上班！」单点补的『上班』已移除。
+// 按 5.4 加权后「恨」本身就是 -2，该句自然落到雨夜档，补词属于违反 C3 的单点补丁。
+// 保留这个空数组，是因为第 5.5 节要求调试面板显示「补词数组当前内容与是否为空」。
+export const POLARITY_SUPPLEMENT = [];
 
 export const WORD_SET = new Set(SEED_WORDS);
-export const POSITIVE_SET = new Set(POSITIVE_WORDS);
-export const NEGATIVE_SET = new Set(NEGATIVE_WORDS.concat(POLARITY_SUPPLEMENT));
+
+// 词 -> 权重。C1 最长匹配、C2 重复叠加都由 sentiment.js 的扫描实现，
+// 这张表只回答「命中的这个词值几分」。
+export const POLARITY_WEIGHTS = new Map();
+STRONG_POSITIVE_WORDS.forEach((word) => POLARITY_WEIGHTS.set(word, 2));
+STRONG_NEGATIVE_WORDS.forEach((word) => POLARITY_WEIGHTS.set(word, -2));
+POSITIVE_WORDS.forEach((word) => {
+  if (!POLARITY_WEIGHTS.has(word)) POLARITY_WEIGHTS.set(word, 1);
+});
+NEGATIVE_WORDS.forEach((word) => {
+  if (!POLARITY_WEIGHTS.has(word)) POLARITY_WEIGHTS.set(word, -1);
+});
 
 // 最长匹配需要的窗口长度
 export const MAX_WORD_LEN = SEED_WORDS.reduce((max, word) => Math.max(max, word.length), 0);
-export const MAX_POLARITY_LEN = POSITIVE_WORDS.concat(NEGATIVE_WORDS, POLARITY_SUPPLEMENT).reduce(
+export const MAX_POLARITY_LEN = [...POLARITY_WEIGHTS.keys()].reduce(
   (max, word) => Math.max(max, word.length),
   0
 );

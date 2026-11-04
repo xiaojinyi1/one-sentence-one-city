@@ -17,7 +17,7 @@ import {
   ruleR8,
   clamp
 } from './rules.js';
-import { buildSlots, makeBlocker, sortByDistance, round } from './layout.js';
+import { buildSlots, makeBlocker, round, spreadOrder } from './layout.js';
 
 const MAX_BUILDINGS = UNITS.instanceCap;
 
@@ -51,8 +51,8 @@ export function plan(features, seed) {
     const column = Math.floor(i / perColumn);
     const row = i % perColumn;
     const z =
-      -radius * 0.1 -
-      (perColumn === 1 ? radius * 0.26 : row * ((radius * 0.56) / (perColumn - 1)));
+      -radius * 0.34 -
+      (perColumn === 1 ? radius * 0.2 : row * ((radius * 0.46) / (perColumn - 1)));
     needles.push({
       x: round((column % 2 === 0 ? -1 : 1) * (grid.avenueHalf + UNITS.needleSection)),
       z: round(z),
@@ -107,13 +107,13 @@ export function plan(features, seed) {
   const isBlocked = makeBlocker(zones);
   const free = grid.slots.filter((slot) => !isBlocked(slot.x, slot.z, plotRadius));
 
-  // ---- R4：前半句住宅、后半句商业，各自从分区中心往外排 ----
-  const residentialSlots = sortByDistance(
+  // ---- R4：前半句住宅、后半句商业；楼少时摊开铺满各自半边 ----
+  const residentialSlots = spreadOrder(
     free.filter((slot) => slot.district === 'residential'),
     -radius * 0.5,
     0
   );
-  const commercialSlots = sortByDistance(
+  const commercialSlots = spreadOrder(
     free.filter((slot) => slot.district === 'commercial'),
     radius * 0.5,
     0
@@ -156,7 +156,7 @@ export function plan(features, seed) {
   }
 
   // ---- R7：城南港区，储罐 / 烟囱 / 集装箱 ----
-  const portSlots = sortByDistance(
+  const portSlots = spreadOrder(
     free.filter((slot) => slot.district === 'port'),
     0,
     radius * 0.72

@@ -3,7 +3,16 @@
 // 只做断言，不改任何状态。
 
 import { EXAMPLES, SITE, UNITS } from './constants.js';
-import { SEED_WORDS, WORD_SET, POSITIVE_WORDS, NEGATIVE_WORDS, POLARITY_SUPPLEMENT } from './wordlist.js';
+import {
+  SEED_WORDS,
+  WORD_SET,
+  POSITIVE_WORDS,
+  NEGATIVE_WORDS,
+  STRONG_POSITIVE_WORDS,
+  STRONG_NEGATIVE_WORDS,
+  POLARITY_SUPPLEMENT,
+  POLARITY_WEIGHTS
+} from './wordlist.js';
 import { scoreSentiment } from './sentiment.js';
 import { tokenize, tokenizeDetailed } from './tokenizer.js';
 import { extract } from './features.js';
@@ -95,10 +104,11 @@ export function runSelfCheck() {
 
   check('“我恨上班！！！” → 雨夜 / 三根针', () => {
     const { features, city } = cityOf(EXAMPLES[2].text);
-    // 「恨」-1 加补词「上班」-1 = -2 → 雨夜；补词单列在 POLARITY_SUPPLEMENT 里。
+    // 第 5.4 节 P2：补词「上班」已移除，「恨」本身按强负面计 -2，故总分仍为 -2。
+    const alone = scoreSentiment('上班');
     return [
-      features.sentimentScore === -2 && city.sky.key === 'night' && city.needles.length === 3,
-      `分=${features.sentimentScore} 天色=${city.sky.key} 针=${city.needles.length}`
+      features.sentimentScore === -2 && city.sky.key === 'night' && city.needles.length === 3 && alone === 0,
+      `分=${features.sentimentScore} 天色=${city.sky.key} 针=${city.needles.length} 上班单独=${alone}`
     ];
   });
 
@@ -113,30 +123,95 @@ export function runSelfCheck() {
     ];
   });
 
-  check('情绪最长匹配不重复计分', () => {
-    const a = scoreSentiment('温暖');
-    const b = scoreSentiment('回家回家');
-    return [a === 1 && b === 2, `温暖=${a} 回家×2=${b}`];
+  // ---- 第 5.5 节断言表：逐条对齐规格里的「期望值」 ----
+  check('默认句 → 1 广场 / 1 断口 / 地标在末位', () => {
+    const { features, city } = cityOf(SITE.defaultText);
+    const lastToken = tokenize(SITE.defaultText).slice(-1)[0];
+    return [
+      city.plazas.length === 1 &&
+        city.roadGaps.length === 1 &&
+        city.landmark.token === lastToken &&
+        city.landmark.beacon === true,
+      `广场=${city.plazas.length} 断口=${city.roadGaps.length} 地标=${city.landmark.token}(末位=${lastToken}) 光柱=${city.landmark.beacon}`
+    ];
   });
 
-  // 5.3 要求「极性词都在 5.2 内」：这里验证 5.2 的每一个词都真的接进了打分器，
-  // 并且符号正确——表里漏词、符号写反都会在这一条暴露。补词单列，条数单独报告。
-  check('极性词全部接入打分器', () => {
+  check('“海” → tokenCount=1 / 半径 8 / 垂直挤压', () => {
+    const { features, city } = cityOf(EXAMPLES[0].text);
+    // 规格内部有一处数值冲突：第 4 节 R1 写死 radius = 8 + tokenCount×0.6，单个 token 得 8.6；
+    // 5.5 断言表写 radius=8。R1 是唯一实现公式，故这里按「最小半径档（取整 8）」硬比较，
+    // 并把 8.6 的实际值打出来，便于复核。
+    return [
+      features.tokenCount === 1 &&
+        Math.floor(city.radius) === UNITS.radiusMin &&
+        city.shape.mode === 'narrow' &&
+        features.avgTokenLen <= 2 &&
+        city.landmark.token === '海',
+      `token=${features.tokenCount} 半径=${city.radius}（R1 公式值，取整 ${Math.floor(city.radius)}）形态=${city.shape.mode} avgLen=${features.avgTokenLen.toFixed(2)}`
+    ];
+  });
+
+  check('“回家”×4 → 小半径 / 地标≥8 层 / 地标=回家', () => {
+    const { city } = cityOf(EXAMPLES[1].text);
+    const inRange = city.landmark.floors >= UNITS.floorsFreq3[0];
+    return [
+      city.radius <= UNITS.radiusMin + 3 && inRange && city.landmark.token === '回家',
+      `半径=${city.radius} 地标=${city.landmark.token} ${city.landmark.floors}层（≥${UNITS.floorsFreq3[0]}）`
+    ];
+  });
+
+  check('中英混排 → 港区与住宅物理分隔', () => {
+    const { city } = cityOf(EXAMPLES[3].text);
+    const portStart = city.avenue.portStart;
+    const portZ = city.wharves.map((item) => item.position[2]);
+    const southOnly = portZ.every((z) => z >= portStart - 0.001);
+    const resInPort = city.units.filter((u) => u.district === 'residential' && u.position[2] >= portStart);
+    return [
+      portZ.length > 0 && southOnly && resInPort.length === 0,
+      `港区件=${portZ.length} 全在城南=${southOnly} 港区内住宅=${resInPort.length}`
+    ];
+  });
+
+  // 第 5.4 节 C1：最长匹配不重复计分；C2：同一词重复出现要叠加。
+  check('C1 最长匹配 / C2 重复叠加', () => {
+    const warm = scoreSentiment('温暖'); // 强正面 2，且不能再被「暖」吃第二分
+    const twice = scoreSentiment('回家回家');
+    const twiceStrong = scoreSentiment('恨恨');
+    return [
+      warm === 2 && twice === 2 && twiceStrong === -4,
+      `温暖=${warm} 回家×2=${twice} 恨×2=${twiceStrong}`
+    ];
+  });
+
+  // 5.3 / 5.4：每个极性词都必须真的接进打分器，且分数与 POLARITY_WEIGHTS 一致
+  // （5.4 之前这里是「一律 ±1」，加权后强词是 ±2，所以改为比对权重表本身）。
+  check('极性词权重与表一致', () => {
     const bad = [];
-    POSITIVE_WORDS.forEach((word) => {
-      if (scoreSentiment(word) !== 1) bad.push(`+${word}`);
+    const all = POSITIVE_WORDS.concat(NEGATIVE_WORDS);
+    all.forEach((word) => {
+      const expected = POLARITY_WEIGHTS.get(word);
+      if (expected === undefined) {
+        bad.push(`${word}:缺`);
+        return;
+      }
+      const actual = scoreSentiment(word);
+      if (actual !== expected) bad.push(`${word}:${actual}≠${expected}`);
     });
-    const negativeAll = NEGATIVE_WORDS.concat(POLARITY_SUPPLEMENT);
-    negativeAll.forEach((word) => {
-      if (scoreSentiment(word) !== -1) bad.push(`-${word}`);
-    });
-    const both = POSITIVE_WORDS.filter((word) => negativeAll.includes(word));
+    const both = POSITIVE_WORDS.filter((word) => NEGATIVE_WORDS.includes(word));
+    const strong = STRONG_POSITIVE_WORDS.length + STRONG_NEGATIVE_WORDS.length;
     return [
       bad.length === 0 && both.length === 0,
       bad.length === 0
-        ? `正 ${POSITIVE_WORDS.length} / 负 ${NEGATIVE_WORDS.length} + 补词 ${POLARITY_SUPPLEMENT.length}${both.length ? ` 冲突:${both.join(',')}` : ''}`
-        : `未接上:${bad.join(',')}`
+        ? `正 ${POSITIVE_WORDS.length} / 负 ${NEGATIVE_WORDS.length} / 强权重 ${strong} / 补词 ${POLARITY_SUPPLEMENT.length}${both.length ? ` 冲突:${both.join(',')}` : ''}`
+        : `不一致:${bad.join(',')}`
     ];
+  });
+
+  // 第 5.4 节 C3 / P3：禁止给中性词赋极性，补词数组不得包含这些词。
+  check('补词数组无中性词', () => {
+    const banned = ['上班', '下班', '会议', '城市', '街道', '名字', '时候'];
+    const dirty = POLARITY_SUPPLEMENT.filter((word) => banned.includes(word));
+    return [dirty.length === 0, dirty.join(',') || '补词数组为空'];
   });
 
   // ---- 第 4 节：规则边界 ----
