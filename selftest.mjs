@@ -26,7 +26,7 @@ rows.forEach((row) => {
     `  tokens=${tokens.length} avgTokenLen=${features.avgTokenLen} 情绪=${features.sentimentScore} 天色=${city.sky.key}`
   );
   console.log(
-    `  半径=${city.radius} 形态=${city.shape} 楼=${city.stats.buildings} 地标=${city.landmark.token}(${city.landmark.floors}层) 罐=${city.stats.tanks} 箱=${city.stats.containers} 针=${city.needles.length} 塔=${city.towers.length}`
+    `  半径=${city.radius} 形态=${city.shape.mode}(plot ${city.shape.plotSize}) 楼=${city.stats.buildings} 地标=${city.landmark.token}(${city.landmark.floors}层) 罐=${city.stats.tanks} 箱=${city.stats.containers} 针=${city.needles.length} 塔=${city.towers.length}`
   );
   console.log(`  token: ${tokens.join(' / ')}`);
 });
