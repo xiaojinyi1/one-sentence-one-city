@@ -139,19 +139,52 @@ export function plan(features, seed) {
     const freq = features.freq.get(token) || 1;
     const floors = ruleR2Floors(freq, rng);
     const height = round(floors * UNITS.storyHeight * shape.floorScale);
-    const fill = shape.plotSize * UNITS.buildingFill;
+
+    // 本轮视觉：建筑宽度在 1.1~1.9 之间抖，但不许跨过自己的地块 ——
+    // narrow 的 plot 只有 0.9，夹到 step 的 84% 就成了一间挨着一间的窄屋，
+    // 而不是原来「地块 1.32、房子 0.70」那种散落的方块。
+    const footprint = Math.min(
+      grid.step * 0.84,
+      rng.range(UNITS.plotFootprintMin, UNITS.plotFootprintMax)
+    );
+    // 本轮视觉：地块位置挪一点，破掉「一整排对齐」的棋盘感
+    const px = round(slot.x + rng.range(-UNITS.plotPosJitter, UNITS.plotPosJitter));
+    const pz = round(slot.z + rng.range(-UNITS.plotPosJitter, UNITS.plotPosJitter));
+
+    // 本轮视觉：纵深。0.75R 以外的楼褪色、压暗；数值按 seed 固定，build 只读它
+    const distance = Math.hypot(px, pz);
+    const depthT = Math.min(
+      1,
+      Math.max(0, (distance / radius - UNITS.depthStart) / (1 - UNITS.depthStart))
+    );
 
     units.push({
       token,
       freq,
       district,
-      position: [slot.x, 0, slot.z],
-      baseFootprint: [round(fill * rng.range(0.86, 1)), height, round(fill * rng.range(0.86, 1))],
+      position: [px, 0, pz],
+      baseFootprint: [round(footprint), height, round(footprint * rng.range(0.92, 1))],
       floors,
       height,
+      // 本轮视觉：±8° 的朝向抖动（不是每栋都朝同一个方向）
+      rotation: round((rng.range(-UNITS.plotRotJitterDeg, UNITS.plotRotJitterDeg) * Math.PI) / 180),
       roofKind: ruleR5Roof(rng),
       hueOffset: round(ruleR5Hue(rng)),
-      windowSeed: round(rng.unit())
+      windowSeed: round(rng.unit()),
+      depthFade: round(depthT * (0.75 + rng.unit() * 0.25))
+    });
+  }
+
+  // ---- 本轮视觉：随机留白 6~10% 的地块作为空地 ----
+  // 空地只留接触阴影（ground.js 里画），不生成任何装饰物。
+  const emptyFraction = rng.range(UNITS.emptyPlotMin, UNITS.emptyPlotMax);
+  const emptyCount = Math.floor(units.length * emptyFraction);
+  const emptyLots = [];
+  for (let i = 0; i < emptyCount && units.length > 0; i += 1) {
+    const [lot] = units.splice(Math.floor(rng.unit() * units.length), 1);
+    emptyLots.push({
+      position: [lot.position[0], 0, lot.position[2]],
+      footprint: Math.max(lot.baseFootprint[0], lot.baseFootprint[2])
     });
   }
 
@@ -238,13 +271,13 @@ export function plan(features, seed) {
         name: 'residential',
         center: [round(-radius * 0.5), 0],
         slots: residentialSlots.length,
-        built: cursor.residential
+        built: units.filter((unit) => unit.district === 'residential').length
       },
       {
         name: 'commercial',
         center: [round(radius * 0.5), 0],
         slots: commercialSlots.length,
-        built: cursor.commercial
+        built: units.filter((unit) => unit.district === 'commercial').length
       },
       {
         name: 'port',
@@ -254,6 +287,8 @@ export function plan(features, seed) {
       }
     ],
     units,
+    // 本轮视觉：留白的地块（只有接触阴影，没有任何建筑）
+    emptyLots,
     landmark,
     plazas,
     needles,
@@ -263,6 +298,8 @@ export function plan(features, seed) {
     roadGaps,
     stats: {
       tokens: features.tokenCount,
+      // 双城对比的差异表直接用这两个字段，不在 UI 里二次估算
+      avgTokenLen: round(features.avgTokenLen),
       buildings: units.length,
       dropped,
       tanks: countOf('tank'),

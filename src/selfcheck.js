@@ -153,10 +153,11 @@ export function runSelfCheck() {
 
   check('“回家”×4 → 小半径 / 地标≥8 层 / 地标=回家', () => {
     const { city } = cityOf(EXAMPLES[1].text);
-    const inRange = city.landmark.floors >= UNITS.floorsFreq3[0];
+    // 第 5.5 节的阈值是「≥8 层」这个字面量，不跟着 UNITS.floorsFreq3 的视觉调整漂移
+    const inRange = city.landmark.floors >= 8;
     return [
       city.radius <= UNITS.radiusMin + 3 && inRange && city.landmark.token === '回家',
-      `半径=${city.radius} 地标=${city.landmark.token} ${city.landmark.floors}层（≥${UNITS.floorsFreq3[0]}）`
+      `半径=${city.radius} 地标=${city.landmark.token} ${city.landmark.floors}层（≥8）`
     ];
   });
 

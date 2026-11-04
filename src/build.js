@@ -167,6 +167,16 @@ export function buildCity(cityPlan, kit) {
   const accent = new THREE.Color(PALETTE.accent);
   const bayWidth = UNITS.storyHeight * 1.15;
 
+  // 本轮视觉：纵深。unit.depthFade 由 plan 按「离城中心多远」算好并存进 CityPlan，
+  // 这里只把颜色按它褪一点、压暗一点 —— 不新建材质，还是同一份共享材质。
+  const depthFade = (base, fade) => {
+    if (!fade || fade <= 0) return base;
+    const hsl = { h: 0, s: 0, l: 0 };
+    base.getHSL(hsl);
+    base.setHSL(hsl.h, hsl.s * (1 - fade * UNITS.depthDesat), hsl.l * (1 - fade * UNITS.depthDarken));
+    return base;
+  };
+
   // ---- 住宅（西半城）+ 地标（借用住宅的暖色窗光材质，色彩由 instanceColor 给）----
   const resMesh = createInstancedMesh(new THREE.BoxGeometry(1, 1, 1), kit.residential, resUnits.length + 1);
   let resUsed = 0;
@@ -176,8 +186,8 @@ export function buildCity(cityPlan, kit) {
       resUsed,
       [unit.position[0], unit.height / 2, unit.position[2]],
       [unit.baseFootprint[0], unit.height, unit.baseFootprint[2]],
-      0,
-      resBase.clone().offsetHSL(unit.hueOffset / 360, 0.01, 0.02),
+      unit.rotation || 0,
+      depthFade(resBase.clone().offsetHSL(unit.hueOffset / 360, 0.01, 0.02), unit.depthFade),
       0.42 + unit.windowSeed * 0.58,
       [Math.max(1, Math.round(unit.baseFootprint[0] / bayWidth)), unit.floors]
     );
@@ -209,8 +219,8 @@ export function buildCity(cityPlan, kit) {
       comUsed,
       [unit.position[0], unit.height / 2, unit.position[2]],
       [unit.baseFootprint[0], unit.height, unit.baseFootprint[2]],
-      0,
-      comBase.clone().offsetHSL(unit.hueOffset / 360, 0.03, 0.03),
+      unit.rotation || 0,
+      depthFade(comBase.clone().offsetHSL(unit.hueOffset / 360, 0.03, 0.03), unit.depthFade),
       0.6 + unit.windowSeed * 0.4,
       [Math.max(1, Math.round(unit.baseFootprint[0] / bayWidth)), unit.floors]
     );
@@ -325,8 +335,8 @@ export function buildCity(cityPlan, kit) {
       [needle.x, needle.height / 2, needle.z],
       [needle.section / 2, needle.height, needle.section / 2],
       0,
-      new THREE.Color('#8f949c'),
-      0.1,
+      new THREE.Color('#62676e'),
+      0.06,
       null
     );
     needleUsed += 1;
@@ -416,16 +426,19 @@ export function buildCity(cityPlan, kit) {
   group.add(wallMesh);
 
   // ---- 地标光柱 + 点光 ----
-  const beamHeight = Math.max(6, landmarkHeight * UNITS.beamHeightScale);
-  const beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(UNITS.beamRadiusTop, UNITS.beamRadiusBottom, 1, 8, 1, true),
-    kit.beam
-  );
-  beam.position.set(0, landmarkHeight + beamHeight / 2, 0);
-  beam.scale.set(1, beamHeight, 1);
-  beam.renderOrder = 4;
-  beam.name = 'beam';
-  group.add(beam);
+  // 本轮视觉：光柱只在黄昏与雨夜出现；清晨是白天，一道光柱会把柔光打回「夜景观感」。
+  if (cityPlan.sky.key !== 'morning') {
+    const beamHeight = Math.max(6, landmarkHeight * UNITS.beamHeightScale);
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(UNITS.beamRadiusTop, UNITS.beamRadiusBottom, 1, 8, 1, true),
+      kit.beam
+    );
+    beam.position.set(0, landmarkHeight + beamHeight / 2, 0);
+    beam.scale.set(1, beamHeight, 1);
+    beam.renderOrder = 4;
+    beam.name = 'beam';
+    group.add(beam);
+  }
 
   const landmarkLight = new THREE.PointLight(
     new THREE.Color(PALETTE.accent),

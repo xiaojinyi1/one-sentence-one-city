@@ -34,40 +34,76 @@ export function createGround(cityPlan) {
   ctx.fillStyle = disc;
   ctx.fillRect(0, 0, size, size);
 
-  // 港区：只有句子里真的出现数字 / 网址时才有沥青域（R7），
-  // 否则空着一大片深色地面，看上去像地上的阴影。
+  // 港区 / 主干道 / 断口：单城时按 cityPlan.avenue 画一套；
+  // 第 18 节 P1 的双城视图把两座城各算成一条 spine，一次画进同一张贴图。
   const hasPort = cityPlan.wharves.length > 0;
-  const portTop = toY(cityPlan.avenue.portStart);
-  if (hasPort) {
-    ctx.fillStyle = '#565a64';
-    ctx.fillRect(toX(-radius * 0.95), portTop, radius * 1.9 * scale, (radius * 0.95) * scale);
-  }
-
-  // 主干道（沿南北）—— 比地面略亮，才看得出是一条路
-  const avenueWidth = cityPlan.avenue.half * 2;
-  ctx.fillStyle = '#8f949e';
-  ctx.fillRect(toX(-cityPlan.avenue.half), toY(-radius), avenueWidth * scale, (radius + cityPlan.avenue.portStart) * scale);
-
-  // 港区横向分隔路
-  const portRoadZ = cityPlan.avenue.portStart - UNITS.plotGap * 2;
-  if (hasPort) {
-    ctx.fillStyle = '#8f949e';
-    ctx.fillRect(toX(-radius * 0.9), toY(portRoadZ), radius * 1.8 * scale, 0.9 * scale);
-  }
-
-  // 句号断口 + 斑马线
-  cityPlan.roadGaps.forEach((gap) => {
-    const gapY = toY(gap.z);
-    const gapH = gap.width * scale;
-    ctx.fillStyle = '#a3a8b2';
-    ctx.fillRect(toX(-cityPlan.avenue.half), gapY - gapH / 2, avenueWidth * scale, gapH);
-
-    const stripes = gap.stripes;
-    const barH = gapH / (stripes * 2);
-    ctx.fillStyle = 'rgba(238, 232, 214, 0.62)';
-    for (let i = 0; i < stripes; i += 1) {
-      ctx.fillRect(toX(-cityPlan.avenue.half * 0.92), gapY - gapH / 2 + i * barH * 2 + barH * 0.5, avenueWidth * 0.92 * scale, barH);
+  const spines = cityPlan.spines || [
+    {
+      x: 0,
+      radius,
+      half: cityPlan.avenue.half,
+      portStart: cityPlan.avenue.portStart,
+      port: hasPort,
+      gaps: cityPlan.roadGaps
     }
+  ];
+
+  spines.forEach((spine) => {
+    const half = spine.half;
+    const avenueWidth = half * 2;
+    const port = spine.port === undefined ? hasPort : spine.port;
+
+    // 港区：只有句子里真的出现数字 / 网址时才有沥青域（R7），
+    // 否则空着一大片深色地面，看上去像地上的阴影。
+    if (port) {
+      ctx.fillStyle = '#565a64';
+      ctx.fillRect(
+        toX(spine.x - spine.radius * 0.95),
+        toY(spine.portStart),
+        spine.radius * 1.9 * scale,
+        spine.radius * 0.95 * scale
+      );
+    }
+
+    // 主干道（沿南北）—— 比地面略亮，才看得出是一条路
+    ctx.fillStyle = '#8f949e';
+    ctx.fillRect(
+      toX(spine.x - half),
+      toY(-spine.radius),
+      avenueWidth * scale,
+      (spine.radius + spine.portStart) * scale
+    );
+
+    // 港区横向分隔路
+    if (port) {
+      const portRoadZ = spine.portStart - UNITS.plotGap * 2;
+      ctx.fillRect(
+        toX(spine.x - spine.radius * 0.9),
+        toY(portRoadZ),
+        spine.radius * 1.8 * scale,
+        0.9 * scale
+      );
+    }
+
+    // 句号断口 + 斑马线
+    (spine.gaps || []).forEach((gap) => {
+      const gapY = toY(gap.z);
+      const gapH = gap.width * scale;
+      ctx.fillStyle = '#a3a8b2';
+      ctx.fillRect(toX(spine.x - half), gapY - gapH / 2, avenueWidth * scale, gapH);
+
+      const stripes = gap.stripes;
+      const barH = gapH / (stripes * 2);
+      ctx.fillStyle = 'rgba(238, 232, 214, 0.62)';
+      for (let i = 0; i < stripes; i += 1) {
+        ctx.fillRect(
+          toX(spine.x - half * 0.92),
+          gapY - gapH / 2 + i * barH * 2 + barH * 0.5,
+          avenueWidth * 0.92 * scale,
+          barH
+        );
+      }
+    });
   });
 
   // 广场石面：比地坪亮一点，才像铺出来的石板，而不是地上一个洞
@@ -106,6 +142,14 @@ export function createGround(cityPlan) {
         x: item.position[0],
         z: item.position[2],
         r: (item.radius ? item.radius * 2 : Math.max(item.size[0], item.size[2])) * UNITS.contactShadowScale
+      }))
+    )
+    // 本轮视觉：留白的地块只有一圈接触阴影，没有建筑
+    .concat(
+      (cityPlan.emptyLots || []).map((lot) => ({
+        x: lot.position[0],
+        z: lot.position[2],
+        r: lot.footprint * UNITS.contactShadowScale
       }))
     );
 
@@ -161,7 +205,7 @@ export function createGround(cityPlan) {
 
   // 地面底色跟天色走：贴图是中性灰，颜色靠 tint 乘上去（不引外部贴图）
   const tint = new THREE.Color(PALETTE.sky[cityPlan.sky.key].ground || '#101218');
-  tint.lerp(new THREE.Color('#ffffff'), 0.5);
+  tint.lerp(new THREE.Color('#ffffff'), UNITS.groundTintLerp);
 
   // 雨夜档：地面 roughness 压低做湿反射，metalness 略抬，不引任何后期处理
   const wet = cityPlan.sky.key === 'night';

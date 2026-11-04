@@ -481,6 +481,250 @@ body {
   text-align: center;
 }
 
+/* ---------- 第 18 节 P1：双城对比 ---------- */
+/* display:flex 会盖掉 [hidden]，和 .debug 一样要显式写一条 */
+.dual[hidden],
+.wall[hidden] {
+  display: none;
+}
+
+.dual {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 96px 32px calc(28px + env(safe-area-inset-bottom, 0px));
+  pointer-events: none;
+  z-index: 5;
+}
+
+.dual-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: auto;
+}
+
+.dual-title {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+
+.dual-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(52vw, 440px);
+  pointer-events: auto;
+}
+
+.dual-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(10, 11, 15, 0.82);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  outline: none;
+  backdrop-filter: blur(10px);
+  transition: border-color 0.2s ease;
+}
+
+.dual-input:focus {
+  border-color: rgba(232, 176, 75, 0.55);
+}
+
+.dual-diff-wrap {
+  margin-top: auto;
+  align-self: center;
+  width: min(92vw, 520px);
+  pointer-events: auto;
+}
+
+.dual-diff {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: rgba(246, 243, 234, 0.82);
+  background: rgba(8, 9, 12, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.dual-diff th,
+.dual-diff td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(246, 243, 234, 0.08);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dual-diff thead th {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(246, 243, 234, 0.5);
+}
+
+.dual-diff tbody th {
+  color: rgba(246, 243, 234, 0.55);
+}
+
+.dual-diff tbody tr:last-child th,
+.dual-diff tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 对比视图里主输入条与示例让位给两个对比输入框 */
+body.is-dual .composer,
+body.is-dual .examples,
+body.is-dual .keys {
+  display: none;
+}
+
+/* ---------- 第 18 节 P4：城市墙 ---------- */
+/* 离屏渲染时 canvas 的绘制缓冲是 512×320，会被拉满屏幕，
+   所以这层必须是不透明的，盖住画布直到整批渲完 */
+.wall {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 76px 32px calc(28px + env(safe-area-inset-bottom, 0px));
+  background: radial-gradient(circle at 50% 0%, #15171d, #0c0d11 62%);
+  overflow-y: auto;
+  z-index: 7;
+}
+
+.wall-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.wall-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.wall-progress {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: rgba(246, 243, 234, 0.55);
+}
+
+.wall-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+}
+
+.wall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.wall-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  border: 1px solid rgba(246, 243, 234, 0.1);
+  border-radius: 10px;
+  background: rgba(246, 243, 234, 0.03);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.wall-cell:hover {
+  border-color: rgba(232, 176, 75, 0.5);
+}
+
+.wall-cell:active {
+  transform: translateY(1px);
+}
+
+.wall-cell img {
+  display: block;
+  width: 100%;
+  /* 缩略图元素上带 width/height 属性，这里必须 height:auto 才能让 16:10 生效 */
+  height: auto;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: #0c0d11;
+}
+
+.wall-caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 10px;
+  font-size: 12px;
+  color: rgba(246, 243, 234, 0.78);
+}
+
+.wall-sentence {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wall-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(246, 243, 234, 0.5);
+}
+
+/* 颜色之外再给一个档位词，颜色不作唯一信息载体（第 13 节） */
+.wall-dot::after {
+  content: attr(data-label);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.wall-dot[data-sky='dusk'] {
+  background: #e8b04b;
+}
+
+.wall-dot[data-sky='night'] {
+  background: #6f8dff;
+}
+
+.wall-dot[data-sky='morning'] {
+  background: #dfe3e6;
+}
+
 /* ---------- 窄屏 ---------- */
 @media (max-width: 720px) {
   .hud {
@@ -544,6 +788,40 @@ body {
 
   .debug .link {
     min-height: 0;
+  }
+
+  /* 手机端：两个对比输入纵向堆叠、城市墙单列或两列横向不挤压 */
+  .dual {
+    padding: 84px 14px calc(18px + env(safe-area-inset-bottom, 0px));
+    gap: 14px;
+  }
+
+  .dual-inputs {
+    width: 100%;
+  }
+
+  .dual-diff-wrap {
+    width: 100%;
+  }
+
+  .dual-diff {
+    font-size: 11px;
+  }
+
+  .wall {
+    padding: 68px 14px calc(18px + env(safe-area-inset-bottom, 0px));
+    gap: 12px;
+  }
+
+  .wall-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+
+  .wall-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
   }
 }
 

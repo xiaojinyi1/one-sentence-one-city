@@ -55,6 +55,8 @@ const GLOW_VERTEX = /* glsl */ `
 const GLOW_FRAGMENT = /* glsl */ `
   varying float vGlow;
   varying float vRoof;
+  // 本轮视觉：窗格亮灯率（每扇窗按「层×列」自己决定亮不亮）
+  uniform float uLitRate;
 `;
 
 function attachGlow(material, hasMap) {
@@ -77,6 +79,8 @@ function attachGlow(material, hasMap) {
       );
 
     if (hasMap) {
+      // 亮灯率走 uniform：切天色时只改这个值，不重建材质（第 7.3 节）
+      shader.uniforms.uLitRate = material.userData.litRate;
       // 窗光遮罩取自「贴图原色」，不能取已经乘过 instanceColor 的 diffuseColor：
       // 否则墙色越深，窗户越不容易过阈值，整栋楼的窗光会被墙色拖没。
       shader.fragmentShader = shader.fragmentShader.replace(
@@ -84,8 +88,14 @@ function attachGlow(material, hasMap) {
         `#include <map_fragment>
         float rawLuma = dot(texture2D(map, vMapUv).rgb, vec3(0.299, 0.587, 0.114));
         float winMask = smoothstep(0.72, 0.92, rawLuma) * (1.0 - vRoof);
+        // 本轮视觉：vMapUv 的整数部分是「层×列」，用它哈希出这一格亮不亮
+        vec2 winCell = floor(vMapUv);
+        float winRand = fract(sin(dot(winCell, vec2(12.9898, 78.233))) * 43758.5453);
+        float winLit = step(winRand, uLitRate);
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.6, vRoof);
-        totalEmissiveRadiance *= winMask;`
+        // 没点亮的窗是暗玻璃，点亮的窗才留给 emissive
+        diffuseColor.rgb *= mix(1.0, 0.45, winMask * (1.0 - winLit));
+        totalEmissiveRadiance *= winMask * winLit;`
       );
     }
   };
@@ -104,6 +114,8 @@ export function createFacadeMaterial(options) {
     roughness: opts.roughness === undefined ? 0.7 : opts.roughness,
     metalness: opts.metalness === undefined ? 0.08 : opts.metalness
   });
+  // 本轮视觉：默认按黄昏档的亮灯率起步，applySkyMood 会按天色改它
+  material.userData.litRate = { value: UNITS.windowLitDusk };
   return attachGlow(material, true);
 }
 
@@ -147,9 +159,9 @@ export function ensureInstanceAttributes(geometry, count) {
 // 三套天色落到材质层：雨夜把商业立面往霓虹色推、并把窗光调亮；
 // 清晨压暗窗光，黄昏居中。只调共享材质的参数，不新建材质（第 7.3 节）。
 const SKY_MOOD = {
-  dusk: { window: 1.05, neon: UNITS.neonDusk, beam: 0.26 },
-  night: { window: 1.55, neon: UNITS.neonNight, beam: 0.4 },
-  morning: { window: 0.5, neon: UNITS.neonMorning, beam: 0.16 }
+  dusk: { window: 1.05, neon: UNITS.neonDusk, beam: 0.26, lit: UNITS.windowLitDusk },
+  night: { window: 1.55, neon: UNITS.neonNight, beam: 0.4, lit: UNITS.windowLitNight },
+  morning: { window: 0.7, neon: UNITS.neonMorning, beam: 0.16, lit: UNITS.windowLitMorning }
 };
 
 export function applySkyMood(kit, skyKey) {
@@ -157,11 +169,14 @@ export function applySkyMood(kit, skyKey) {
 
   kit.residential.emissive.set(PALETTE.residential.window);
   kit.residential.emissiveIntensity = mood.window;
+  // 本轮视觉：亮灯率只改 uniform 的值，材质还是那两份共享材质
+  if (kit.residential.userData.litRate) kit.residential.userData.litRate.value = mood.lit;
 
   const cold = new THREE.Color(PALETTE.commercial.window);
   const neon = new THREE.Color(PALETTE.commercial.neon);
   kit.commercial.emissive.copy(cold).lerp(neon, skyKey === 'night' ? 0.62 : skyKey === 'dusk' ? 0.34 : 0.1);
   kit.commercial.emissiveIntensity = mood.window * 0.95;
+  if (kit.commercial.userData.litRate) kit.commercial.userData.litRate.value = mood.lit;
 
   kit.beam.opacity = mood.beam;
   return mood;

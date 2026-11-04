@@ -3,7 +3,15 @@
 // 第 8 节冷启动：打开页面就用默认句子（或 ?t= 里的句子）建一次城。
 
 import './style.css';
-import { MAX_TEXT, SITE, UI_COPY, UNITS } from './constants.js';
+import {
+  EXAMPLES,
+  MAX_TEXT,
+  SITE,
+  UI_COPY,
+  UNITS,
+  VISUAL_DIFF,
+  WALL_SENTENCES
+} from './constants.js';
 import { fnv1a } from './seed.js';
 import { tokenize } from './tokenizer.js';
 import { extract } from './features.js';
@@ -19,22 +27,35 @@ import { POLARITY_SUPPLEMENT } from './wordlist.js';
 const app = document.getElementById('app');
 const params = new URLSearchParams(window.location.search);
 const initialText = (params.get('t') || SITE.defaultText || '').slice(0, MAX_TEXT);
+// 第 18 节 P1：t1 + t2 同时存在时，打开就是对比视图；只有 t 时行为不变
+const initialDual =
+  params.get('t1') && params.get('t2')
+    ? {
+        a: params.get('t1').slice(0, MAX_TEXT),
+        b: params.get('t2').slice(0, MAX_TEXT)
+      }
+    : null;
 
 if (!app) {
   // 页面骨架缺失时不做任何事，避免直接抛错白屏
 } else if (!supportsWebGL()) {
   renderFallback(app);
 } else {
-  boot(app, initialText);
+  boot(app, initialText, initialDual);
 }
 
-function boot(root, firstText) {
+function boot(root, firstText, firstDual) {
   let stage = null;
   let wireframe = false;
   let debugView = false;
   let lastCheck = null;
   let lastText = null;
   let lastFeatures = null;
+  // 第 18 节 P1 / P4：视图状态。默认永远是单城主视图。
+  let view = 'single';
+  let dualText = { a: '', b: '' };
+  let dualTimer = { a: 0, b: 0 };
+  let wallImages = [];
 
   const isMobile =
     /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 720;
@@ -61,7 +82,20 @@ function boot(root, firstText) {
     },
     onDebug: () => paintDebug(),
     onExport: () => exportPng(),
-    onPlanJson: () => exportPlanJson()
+    onPlanJson: () => exportPlanJson(),
+    onDualOpen: () => openDualView(),
+    onDualClose: () => closeDualView(),
+    onDualInput: (side, value) => scheduleDual(side, value),
+    onWallOpen: () => openWall(),
+    onWallClose: () => closeWall(),
+    onWallExport: () => exportWallImage(),
+    onWallPick: (text) => {
+      wallAfter = text;
+      closeWall();
+      ui.setValue(text);
+      lastText = null;
+      writeUrl(text); // 收起动画之后 URL 也要立刻是这一句（第 12 节：可复现）
+    }
   });
 
   stage = createStage(ui.canvas, { isMobile, reducedMotion, lowEnd });
@@ -139,6 +173,9 @@ function boot(root, firstText) {
     const url = new URL(window.location.href);
     if (text) url.searchParams.set('t', text);
     else url.searchParams.delete('t');
+    // 单城视图不该留着上一个对比链接
+    url.searchParams.delete('t1');
+    url.searchParams.delete('t2');
     window.history.replaceState(null, '', url.toString());
   }
 
@@ -196,13 +233,22 @@ function boot(root, firstText) {
             .map((key) => `${key} ${omitted[key]}`)
             .join(' / ');
       lines.push(
-        `规则 广场 ${cityPlan.plazas.length} · 断口 ${cityPlan.roadGaps.length} · 针 ${cityPlan.needles.length} · 扭塔 ${cityPlan.towers.length} · 围墙 ${cityPlan.walls.length} · 省略 ${omittedText}`
+        `规则 广场 ${cityPlan.plazas.length} · 断口 ${cityPlan.roadGaps.length} · 针 ${cityPlan.needles.length} · 扭塔 ${cityPlan.towers.length} · 围墙 ${cityPlan.walls.length} · 空地 ${
+          (cityPlan.emptyLots || []).length
+        } · 省略 ${omittedText}`
       );
       lines.push(`楼 ${cityPlan.units.length} · 简化形状 ${cityPlan.plotCount} · seed ${cityPlan.seed}`);
       lines.push(`drawcall ${city ? city.drawCalls + 2 : 0} / 12 · 实例上限 ${UNITS.instanceCap}`);
     } else {
       lines.push('还没有城。');
     }
+
+    // 本轮视觉：把参数改动逐条列出来（before 是上一版的字面量，after 从 UNITS / PALETTE 现取）
+    lines.push('');
+    lines.push('视觉参数 diff（本轮）');
+    VISUAL_DIFF.forEach((item) => {
+      lines.push(`· ${item.label}  ${item.before} → ${item.after}`);
+    });
 
     ui.setDebug(lines.join('\n'));
   }
@@ -275,13 +321,284 @@ function boot(root, firstText) {
     downloadBlob(new Blob([json], { type: 'application/json' }), `cityplan-${controller.plan.seed}.json`);
   }
 
-  ui.setValue(firstText);
-  generate(firstText);
+  // ---------- 第 18 节 P1：双城对比 ----------
 
-  // 分享进来的链接如果带 ?t=，中文会被 URL 编码，这里只负责回填输入框
+  function composeCity(text) {
+    const tokens = tokenize(text);
+    const features = extract(tokens, text);
+    return { features, cityPlan: plan(features, fnv1a(text)) };
+  }
+
+  const signed = (score) => (score > 0 ? `+${score}` : String(score));
+
+  // 差异表的每一个数字都直接取 CityPlan 字段，不在前端二次估算
+  function buildDiffRows(a, b) {
+    const tier = (cityPlan) =>
+      `${SKY_LABEL[cityPlan.sky.key] || cityPlan.sky.key} ${signed(cityPlan.sky.sentimentScore)}`;
+    const topToken = (cityPlan) => `${cityPlan.sky.topToken || '—'} ×${cityPlan.sky.topFrequency}`;
+    return [
+      { label: '词数', a: String(a.stats.tokens), b: String(b.stats.tokens) },
+      { label: '半径', a: a.radius.toFixed(2), b: b.radius.toFixed(2) },
+      { label: '平均词长', a: a.stats.avgTokenLen.toFixed(2), b: b.stats.avgTokenLen.toFixed(2) },
+      { label: '情绪得分', a: signed(a.sky.sentimentScore), b: signed(b.sky.sentimentScore) },
+      { label: '最高词', a: topToken(a), b: topToken(b) },
+      { label: '建筑实例', a: String(a.stats.buildings), b: String(b.stats.buildings) },
+      { label: '天色档位', a: tier(a), b: tier(b) }
+    ];
+  }
+
+  function rebuildDual() {
+    if (!dualText.a || !dualText.b) return;
+    try {
+      const left = composeCity(dualText.a);
+      const right = composeCity(dualText.b);
+      controller.applyDual(left.cityPlan, right.cityPlan);
+      ui.setDualRows(buildDiffRows(left.cityPlan, right.cityPlan));
+      if (wireframe) stage.setWireframe(true);
+      writeUrlDual(dualText.a, dualText.b);
+      ui.setStatus('');
+    } catch (error) {
+      console.error(error);
+      ui.setStatus('error', `两座城有一边没建起来：${error && error.message ? error.message : error}`);
+    }
+  }
+
+  function openDualView(aText, bText) {
+    const fallbackB = EXAMPLES[2] ? EXAMPLES[2].text : SITE.defaultText;
+    const a = String(aText || dualText.a || ui.getValue() || SITE.defaultText).trim();
+    const b = String(bText || dualText.b || fallbackB).trim();
+    view = 'dual';
+    dualText = { a, b };
+    ui.showDual(true);
+    ui.setDualValues(a, b);
+    ui.setStatus('');
+    rebuildDual();
+  }
+
+  function closeDualView(silent) {
+    if (view !== 'dual') return;
+    view = 'single';
+    ui.showDual(false);
+    stage.exitDualView();
+    controller.clear();
+    lastText = null;
+    if (!silent) {
+      const text = ui.getValue().trim() || SITE.defaultText;
+      generate(text);
+    }
+  }
+
+  function scheduleDual(side, value) {
+    const key = side === 'b' ? 'b' : 'a';
+    window.clearTimeout(dualTimer[key]);
+    dualTimer[key] = window.setTimeout(() => {
+      const text = String(value || '').trim();
+      if (!text || view !== 'dual' || text === dualText[key]) return;
+      dualText[key] = text;
+      rebuildDual();
+    }, 300);
+  }
+
+  function writeUrlDual(a, b) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('t');
+    url.searchParams.set('t1', a);
+    url.searchParams.set('t2', b);
+    window.history.replaceState(null, '', url.toString());
+  }
+
+  // ---------- 第 18 节 P4：城市墙 ----------
+
+  let wallBusy = false;
+  let wallCancelled = false;
+  let wallAfter = null; // 从城里点某一格进来时，收尾后要重建的那句话
+  let wallPrevious = 'single'; // 打开城市墙之前是哪个视图，收起时原路返回
+  const nextFrame = () =>
+    new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+  // 12 句逐城离屏渲染：全程只有一个 renderer、场景里最多一座城，
+  // 每座城渲完立刻 clear()，几何/材质/贴图当帧释放，内存不会一路涨上去。
+  async function openWall() {
+    if (wallBusy || view === 'wall') return;
+    const previous = view;
+    wallPrevious = previous;
+    wallBusy = true;
+    wallCancelled = false;
+    view = 'wall';
+    ui.showWall(true);
+    ui.clearWall();
+    wallImages = [];
+    stage.stop();
+    ui.setWallProgress(`准备中 0 / ${WALL_SENTENCES.length}`);
+
+    try {
+      stage.beginOffscreen(UNITS.wallWidth, UNITS.wallHeight);
+      for (let i = 0; i < WALL_SENTENCES.length; i += 1) {
+        if (wallCancelled) break;
+        const text = WALL_SENTENCES[i];
+        ui.setWallProgress(`生成中 ${i + 1} / ${WALL_SENTENCES.length} · ${text.slice(0, 14)}`);
+        await nextFrame();
+
+        const built = composeCity(text);
+        // instant：跳过升起动画；offscreen：跳过地块网格与浮尘，出图用不上
+        controller.apply(built.cityPlan, { instant: true, offscreen: true });
+        stage.setWallCamera(built.cityPlan.radius, built.cityPlan.landmark.height);
+        stage.renderer.render(stage.scene, stage.camera);
+        const dataUrl = stage.renderer.domElement.toDataURL('image/png');
+
+        // 这一座城到此为止：立刻释放，再进下一句
+        controller.clear();
+
+        wallImages.push({ text, dataUrl });
+        ui.addWallItem({
+          dataUrl,
+          text,
+          width: UNITS.wallWidth,
+          height: UNITS.wallHeight,
+          skyKey: built.cityPlan.sky.key,
+          skyLabel: SKY_LABEL[built.cityPlan.sky.key] || built.cityPlan.sky.key
+        });
+        await nextFrame();
+      }
+      if (!wallCancelled) {
+        ui.setWallProgress(`${wallImages.length} / ${WALL_SENTENCES.length} · 完成`);
+      }
+    } catch (error) {
+      console.error(error);
+      ui.setStatus('error', `城市墙没画完：${error && error.message ? error.message : error}`);
+    } finally {
+      controller.clear();
+      stage.endOffscreen();
+      stage.start();
+      wallBusy = false;
+      ui.showWall(false);
+      // 点某一格进来的话，先记下要重建哪句话
+      const after = wallAfter;
+      wallAfter = null;
+      view = wallPrevious;
+      // 点时的那句话优先；否则回到进来之前那个视图，别把用户丢在一张空地上
+      if (after) {
+        view = 'single';
+        lastText = null;
+        generate(after);
+      } else if (view === 'dual') {
+        rebuildDual();
+      } else {
+        view = 'single';
+        lastText = null;
+        generate(ui.getValue().trim() || SITE.defaultText);
+      }
+    }
+  }
+
+  function closeWall() {
+    if (view !== 'wall') return;
+    wallCancelled = true;
+    ui.showWall(false);
+    // 生成循环还活着的话交给 openWall 的 finally 收尾，别在这儿抢着重建
+    if (!wallBusy) {
+      const after = wallAfter;
+      wallAfter = null;
+      view = wallPrevious;
+      if (after) {
+        view = 'single';
+        lastText = null;
+        generate(after);
+      } else if (view === 'dual') {
+        rebuildDual();
+      } else {
+        view = 'single';
+        lastText = null;
+        generate(ui.getValue().trim() || SITE.defaultText);
+      }
+    }
+  }
+
+  // 导出：整墙长图一张（12 张逐一下载要 12 次弹窗，成本更高，所以选整墙）
+  function exportWallImage() {
+    if (!wallImages.length) {
+      ui.setStatus('warn', '城市墙还没生成完。');
+      return;
+    }
+    try {
+      const cols = Math.max(1, UNITS.wallColumns);
+      const cellW = UNITS.wallWidth;
+      const cellH = UNITS.wallHeight;
+      const gap = 16;
+      const pad = 24;
+      const caption = 46;
+      const title = 64;
+      const rows = Math.ceil(wallImages.length / cols);
+      const width = pad * 2 + cols * cellW + (cols - 1) * gap;
+      const height = pad * 2 + title + rows * (cellH + caption) + (rows - 1) * gap;
+
+      const out = document.createElement('canvas');
+      out.width = width;
+      out.height = height;
+      const ctx = out.getContext('2d');
+      if (!ctx) throw new Error('当前浏览器不支持 2D 画布');
+
+      ctx.fillStyle = '#0c0d11';
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#f6f3ea';
+      ctx.font = '600 30px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(`${UI_COPY.title} · 城市墙`, pad, pad + 34);
+      ctx.fillStyle = 'rgba(232,176,75,0.92)';
+      ctx.font = '18px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
+      ctx.fillText(`${wallImages.length} 句 · by ${SITE.author}`, pad, pad + 58);
+
+      wallImages.forEach((item, index) => {
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        const x = pad + col * (cellW + gap);
+        const y = pad + title + row * (cellH + caption + gap);
+        const img = new Image();
+        img.src = item.dataUrl;
+        ctx.drawImage(img, x, y, cellW, cellH);
+        ctx.fillStyle = 'rgba(246,243,234,0.92)';
+        ctx.font = '20px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
+        const sentence = item.text.length > 24 ? `${item.text.slice(0, 24)}…` : item.text;
+        ctx.fillText(sentence, x + 4, y + cellH + 28);
+      });
+
+      const url = out.toDataURL('image/png');
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `citywall-${Date.now()}.png`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      ui.setStatus('ok', '整墙长图已保存。');
+    } catch (error) {
+      console.error(error);
+      ui.setStatus('error', `长图没存下来：${error && error.message ? error.message : error}`);
+    }
+  }
+
+  if (firstDual) {
+    ui.setValue(firstDual.a);
+    openDualView(firstDual.a, firstDual.b);
+  } else {
+    ui.setValue(firstText);
+    generate(firstText);
+  }
+
+  // 分享进来的链接如果带 ?t= 或 ?t1=&t2=，中文会被 URL 编码，这里只负责回填
   window.addEventListener('popstate', () => {
-    const next = new URLSearchParams(window.location.search).get('t') || SITE.defaultText;
-    ui.setValue(next);
-    generate(next);
+    const next = new URLSearchParams(window.location.search);
+    const a = next.get('t1');
+    const b = next.get('t2');
+    if (a && b) {
+      ui.setValue(a);
+      openDualView(a, b);
+      return;
+    }
+    const text = next.get('t') || SITE.defaultText;
+    if (view === 'dual') closeDualView(true);
+    ui.setValue(text);
+    generate(text);
   });
 }

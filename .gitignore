@@ -4,3 +4,5 @@ dist/
 *.log
 .vite/
 shots/
+tools/
+preview.log
