@@ -214,6 +214,34 @@ export const UNITS = {
   groundTintLerp: 0.3,
   groundTextureSize: 1024,
 
+  // 3D 精修：程序化细节比例。只影响 build/materials 的视觉层，
+  // 不进入 CityPlan，也不改变任何文本规则。
+  facadeTextureSize: 128,
+  containerTextureSize: 128,
+  twistSegments: 14,
+  landmarkLowerRatio: 0.7,
+  landmarkUpperRatio: 0.22,
+  landmarkCrownRatio: 0.08,
+  landmarkUpperScale: 0.76,
+  landmarkCrownScale: 0.42,
+  parapetMinFloors: 3,
+  parapetHeight: 0.08,
+  parapetThickness: 0.055,
+  parapetOverhang: 0.025,
+  tankBodyRatio: 0.88,
+  tankBandHeight: 0.05,
+  tankBandRadiusScale: 1.025,
+  chimneySegmentRatios: [0.42, 0.33, 0.25],
+  chimneyRadiusScales: [1.18, 1.0, 0.84],
+  waterTankBodyRatio: 0.78,
+  waterTankCapHeight: 0.08,
+  fountainWaterRadiusRatio: 0.78,
+  fountainWaterHeight: 0.05,
+  fountainJetBottomRadius: 0.075,
+  fountainJetTopRadius: 0.028,
+  envCacheDesktop: 4,
+  envCacheMobile: 2,
+
   // 第 18 节 P1：双城对比
   // 两城之间的空隙 = max(dualGapMin, 较大半径 * dualGapRatio)；
   // 各自沿 X 偏移 ±(radius + gap/2)，两城的内边缘正好隔开 gap。

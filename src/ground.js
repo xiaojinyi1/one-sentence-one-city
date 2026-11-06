@@ -20,6 +20,9 @@ export function createGround(cityPlan) {
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   const rng = createRng(cityPlan.seed ^ 0x1f3d5b);
+  // 新增地面细节使用独立随机源，不消耗上面的 rng 序列，
+  // 保证原有水痕、噪点和 CityPlan 的确定性完全不变。
+  const detailRng = createRng((cityPlan.seed ^ 0x7a3f91c) >>> 0);
 
   // 城外深、城内亮。整张画布一起渐变（不是画一个圆盘），
   // 这样可见的地面不会出现「亮圆盘 / 暗外围」的硬边。
@@ -85,6 +88,33 @@ export function createGround(cityPlan) {
       );
     }
 
+    // 主干道两侧路缘线：极低对比，只给道路一个收边
+    const curbWidth = Math.max(1, 0.07 * scale);
+    const roadTop = toY(-spine.radius);
+    const roadHeight = (spine.radius + spine.portStart) * scale;
+    ctx.fillStyle = 'rgba(238,232,214,0.16)';
+    ctx.fillRect(toX(spine.x - half), roadTop, curbWidth, roadHeight);
+    ctx.fillRect(toX(spine.x + half) - curbWidth, roadTop, curbWidth, roadHeight);
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(toX(spine.x - half) + curbWidth, roadTop, Math.max(1, curbWidth * 0.6), roadHeight);
+    ctx.fillRect(toX(spine.x + half) - curbWidth * 1.6, roadTop, Math.max(1, curbWidth * 0.6), roadHeight);
+
+    // 港区铺装接缝：稀疏横缝 + 轻微磨损，不改变道路与港区位置
+    if (port) {
+      const seamTop = spine.portStart;
+      const seamBottom = spine.portStart + spine.radius * 0.82;
+      for (let z = seamTop; z < seamBottom; z += 0.82) {
+        const alpha = 0.05 + detailRng.unit() * 0.05;
+        ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+        ctx.fillRect(
+          toX(spine.x - spine.radius * 0.88),
+          toY(z),
+          spine.radius * 1.76 * scale,
+          Math.max(1, 0.035 * scale)
+        );
+      }
+    }
+
     // 句号断口 + 斑马线
     (spine.gaps || []).forEach((gap) => {
       const gapY = toY(gap.z);
@@ -117,6 +147,26 @@ export function createGround(cityPlan) {
     ctx.beginPath();
     ctx.arc(toX(plaza.x), toY(plaza.z), plaza.radius * 0.9 * scale, 0, Math.PI * 2);
     ctx.stroke();
+
+    // 轻量铺装缝：固定角度的放射缝 + 两条同心缝，避免大面积纯色
+    const cx = toX(plaza.x);
+    const cy = toY(plaza.z);
+    ctx.strokeStyle = 'rgba(70, 66, 60, 0.16)';
+    ctx.lineWidth = Math.max(1, 0.018 * scale);
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (i / 8) * Math.PI * 2 + detailRng.unit() * 0.08;
+      const inner = plaza.radius * 0.18 * scale;
+      const outer = plaza.radius * 0.86 * scale;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
+      ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+      ctx.stroke();
+    }
+    [0.42, 0.66].forEach((ratio) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, plaza.radius * ratio * scale, 0, Math.PI * 2);
+      ctx.stroke();
+    });
   });
 
   // 接触阴影：每栋楼底部一圈 CanvasTexture 径向渐变（第 10 节，opacity 0.35）。

@@ -5,32 +5,48 @@
 import * as THREE from 'three';
 import { PALETTE, UNITS } from './constants.js';
 
-const TILE = 64;
+const TILE = UNITS.facadeTextureSize;
 
 export function createFacadeTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = TILE;
   canvas.height = TILE;
   const ctx = canvas.getContext('2d');
+  const s = TILE / 64;
 
   // 一格的立面：墙是浅灰、窗接近纯白 —— 亮度差被 shader 当作窗光遮罩。
   // 墙不能太暗：这张图还要乘上 instanceColor 的墙色，暗了整栋楼会发黑。
   ctx.fillStyle = 'rgb(215,215,215)';
   ctx.fillRect(0, 0, TILE, TILE);
 
+  // 轻微墙面粉化：只做极低对比的竖向纹理，避免照片化污渍
+  for (let x = 0; x < TILE; x += 3) {
+    const alpha = 0.015 + ((x * 37) % 11) * 0.002;
+    ctx.fillStyle = (x / 3) % 2 === 0 ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha * 0.7})`;
+    ctx.fillRect(x, 0, 1, TILE);
+  }
+
+  // 楼板线和勒脚
   ctx.fillStyle = 'rgb(170,170,170)';
-  ctx.fillRect(0, 0, TILE, 3);
-  ctx.fillRect(0, TILE - 4, TILE, 4);
+  ctx.fillRect(0, 0, TILE, Math.max(3, 3 * s));
+  ctx.fillRect(0, TILE - Math.max(4, 4 * s), TILE, Math.max(4, 4 * s));
 
+  // 窗框：略低于墙，不参与窗光遮罩
+  ctx.fillStyle = 'rgb(188,184,176)';
+  ctx.fillRect(18 * s, 15 * s, 28 * s, 34 * s);
+
+  // 窗玻璃：必须保持接近纯白，窗光阈值依赖这段亮度
   ctx.fillStyle = 'rgb(255,252,246)';
-  ctx.fillRect(18, 15, 28, 34);
+  ctx.fillRect((18 + 1.4) * s, (15 + 1.4) * s, (28 - 2.8) * s, (34 - 2.8) * s);
 
+  // 竖梃和横梃
   ctx.fillStyle = 'rgb(196,192,184)';
-  ctx.fillRect(31, 15, 2, 34);
-  ctx.fillRect(18, 31, 28, 2);
+  ctx.fillRect(31 * s, 15 * s, Math.max(1, 1.2 * s), 34 * s);
+  ctx.fillRect(18 * s, 31 * s, 28 * s, Math.max(1, 1.2 * s));
 
+  // 窗台
   ctx.fillStyle = 'rgb(150,150,150)';
-  ctx.fillRect(16, 49, 32, 2);
+  ctx.fillRect(16 * s, 49 * s, 32 * s, Math.max(1, 1.6 * s));
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
@@ -41,29 +57,112 @@ export function createFacadeTexture() {
   return texture;
 }
 
+export function createContainerTexture() {
+  const size = UNITS.containerTextureSize;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  // 中性近白底色：箱体颜色仍由 instanceColor 提供，避免被底色乘暗
+  ctx.fillStyle = 'rgb(236,236,236)';
+  ctx.fillRect(0, 0, size, size);
+
+  // 竖向瓦楞：低对比明暗条，配合 bumpMap 形成轻微起伏
+  const rib = Math.max(4, Math.round(size / 16));
+  for (let x = 0; x < size; x += rib) {
+    ctx.fillStyle = 'rgba(0,0,0,0.075)';
+    ctx.fillRect(x, 0, Math.max(1, rib * 0.22), size);
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillRect(x + Math.max(1, rib * 0.62), 0, Math.max(1, rib * 0.2), size);
+  }
+
+  // 边角框架
+  const edge = Math.max(3, Math.round(size * 0.045));
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillRect(0, 0, size, edge);
+  ctx.fillRect(0, size - edge, size, edge);
+  ctx.fillRect(0, 0, edge, size);
+  ctx.fillRect(size - edge, 0, edge, size);
+
+  // 端面门缝与锁杆：只做轻微软阴影，不增加几何
+  const doorX = size * 0.5;
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  ctx.fillRect(doorX - Math.max(1, size * 0.006), edge, Math.max(2, size * 0.012), size - edge * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.1)';
+  ctx.fillRect(size * 0.32, edge, Math.max(1, size * 0.008), size - edge * 2);
+  ctx.fillRect(size * 0.68, edge, Math.max(1, size * 0.008), size - edge * 2);
+
+  // 顶面浅波纹与边角磨损
+  ctx.fillStyle = 'rgba(255,255,255,0.045)';
+  ctx.fillRect(0, size * 0.18, size, Math.max(1, size * 0.02));
+  ctx.fillRect(0, size * 0.8, size, Math.max(1, size * 0.02));
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 const GLOW_CHUNK = /* glsl */ `
   attribute float aGlow;
+  attribute float aSeed;
+  attribute float aTwist;
   varying float vGlow;
   varying float vRoof;
+  varying float vFaceSeed;
 `;
 
 const GLOW_VERTEX = /* glsl */ `
   vGlow = aGlow;
   vRoof = step(0.5, normal.y);
+  vFaceSeed = aSeed + abs(normal.x) * 17.17 + abs(normal.z) * 31.37;
 `;
 
 const GLOW_FRAGMENT = /* glsl */ `
   varying float vGlow;
   varying float vRoof;
-  // 本轮视觉：窗格亮灯率（每扇窗按「层×列」自己决定亮不亮）
+  varying float vFaceSeed;
+  // 本轮视觉：窗格亮灯率（每扇窗按「层×列 + 实例/朝向种子」决定亮不亮）
   uniform float uLitRate;
 `;
 
-function attachGlow(material, hasMap) {
+function attachGlow(material, hasMap, options) {
+  const opts = options || {};
   material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${GLOW_CHUNK}`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${GLOW_VERTEX}`);
+    let vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      `#include <common>\n${GLOW_CHUNK}`
+    );
+
+    if (opts.twist === true) {
+      vertexShader = vertexShader
+        .replace(
+          '#include <beginnormal_vertex>',
+          `#include <beginnormal_vertex>
+          float twistNormalAngle = (position.y + 0.5) * aTwist;
+          float twistNormalCos = cos(twistNormalAngle);
+          float twistNormalSin = sin(twistNormalAngle);
+          objectNormal.xz = mat2(twistNormalCos, -twistNormalSin, twistNormalSin, twistNormalCos) * objectNormal.xz;`
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          ${GLOW_VERTEX}
+          float twistPositionAngle = (position.y + 0.5) * aTwist;
+          float twistPositionCos = cos(twistPositionAngle);
+          float twistPositionSin = sin(twistPositionAngle);
+          transformed.xz = mat2(twistPositionCos, -twistPositionSin, twistPositionSin, twistPositionCos) * transformed.xz;`
+        );
+    } else {
+      vertexShader = vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>\n${GLOW_VERTEX}`
+      );
+    }
+
+    shader.vertexShader = vertexShader;
 
     if (hasMap) {
       shader.vertexShader = shader.vertexShader
@@ -86,11 +185,12 @@ function attachGlow(material, hasMap) {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-        float rawLuma = dot(texture2D(map, vMapUv).rgb, vec3(0.299, 0.587, 0.114));
+        float rawLuma = dot(sampledDiffuseColor.rgb, vec3(0.299, 0.587, 0.114));
         float winMask = smoothstep(0.72, 0.92, rawLuma) * (1.0 - vRoof);
-        // 本轮视觉：vMapUv 的整数部分是「层×列」，用它哈希出这一格亮不亮
+        // 本轮视觉：vMapUv 的整数部分是「层×列」，再叠加实例与朝向种子，
+        // 同尺寸楼也不会得到完全相同的亮灯图案
         vec2 winCell = floor(vMapUv);
-        float winRand = fract(sin(dot(winCell, vec2(12.9898, 78.233))) * 43758.5453);
+        float winRand = fract(sin(dot(vec3(winCell, vFaceSeed), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
         float winLit = step(winRand, uLitRate);
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.6, vRoof);
         // 没点亮的窗是暗玻璃，点亮的窗才留给 emissive
@@ -99,7 +199,30 @@ function attachGlow(material, hasMap) {
       );
     }
   };
-  material.customProgramCacheKey = () => (hasMap ? 'facade-glow' : 'plain-glow');
+  material.customProgramCacheKey = () => {
+    if (!hasMap) return 'plain-glow-v2';
+    return opts.twist === true ? 'facade-glow-twist-v2' : 'facade-glow-v2';
+  };
+  return material;
+}
+
+export function createTwistDepthMaterial() {
+  const material = new THREE.MeshDepthMaterial({
+    depthPacking: THREE.RGBADepthPacking
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aTwist;')
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        float depthTwistAngle = (position.y + 0.5) * aTwist;
+        float depthTwistCos = cos(depthTwistAngle);
+        float depthTwistSin = sin(depthTwistAngle);
+        transformed.xz = mat2(depthTwistCos, -depthTwistSin, depthTwistSin, depthTwistCos) * transformed.xz;`
+      );
+  };
+  material.customProgramCacheKey = () => 'twist-depth-v1';
   return material;
 }
 
@@ -116,7 +239,7 @@ export function createFacadeMaterial(options) {
   });
   // 本轮视觉：默认按黄昏档的亮灯率起步，applySkyMood 会按天色改它
   material.userData.litRate = { value: UNITS.windowLitDusk };
-  return attachGlow(material, true);
+  return attachGlow(material, true, { twist: opts.twist === true });
 }
 
 export function createPlainMaterial(options) {
@@ -128,7 +251,10 @@ export function createPlainMaterial(options) {
     emissiveIntensity: opts.emissiveIntensity === undefined ? 1 : opts.emissiveIntensity,
     roughness: opts.roughness === undefined ? 0.6 : opts.roughness,
     metalness: opts.metalness === undefined ? 0.2 : opts.metalness,
-    flatShading: opts.flatShading === true
+    flatShading: opts.flatShading === true,
+    map: opts.map || null,
+    bumpMap: opts.bumpMap || null,
+    bumpScale: opts.bumpScale === undefined ? 1 : opts.bumpScale
   });
   return attachGlow(material, false);
 }
@@ -141,7 +267,9 @@ export function whiteVertexColors(geometry) {
   return geometry;
 }
 
-// 给 5 组 InstancedMesh 用的公共实例属性：aGlow（窗光亮度）、aUvScale（楼层/开窗倍数）
+// 给全部实例组用的公共实例属性：
+// aGlow（窗光亮度）、aUvScale（楼层/开窗倍数）、
+// aSeed（实例窗光种子）、aTwist（扭塔总扭转角，其他实例为 0）
 export function ensureInstanceAttributes(geometry, count) {
   const glow = new THREE.InstancedBufferAttribute(new Float32Array(count).fill(1), 1);
   glow.setUsage(THREE.DynamicDrawUsage);
@@ -151,6 +279,18 @@ export function ensureInstanceAttributes(geometry, count) {
     const uv = new THREE.InstancedBufferAttribute(new Float32Array(count * 2).fill(1), 2);
     uv.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('aUvScale', uv);
+  }
+
+  if (!geometry.getAttribute('aSeed')) {
+    const seed = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
+    seed.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('aSeed', seed);
+  }
+
+  if (!geometry.getAttribute('aTwist')) {
+    const twist = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
+    twist.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('aTwist', twist);
   }
   return geometry;
 }

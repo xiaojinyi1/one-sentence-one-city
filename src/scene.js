@@ -7,7 +7,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PALETTE, UNITS } from './constants.js';
 import { createGround, disposeGround } from './ground.js';
 import { createSky, disposeSky } from './sky.js';
-import { createLights } from './lights.js';
+import { createLights, disposeLights } from './lights.js';
 import { createDust, disposeDust } from './dust.js';
 import { createDebugOverlay, disposeDebugOverlay } from './debugview.js';
 
@@ -33,6 +33,10 @@ export function createStage(canvas, options) {
   // 本轮视觉：用 PCF（而不是 PCFSoft）才能让 light.shadow.radius 真的生效，
   // 三个天色各自给一个核半径 —— 晨光要更糊、对比更低。
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  // 静态城市场景：阴影只在城市/灯光/升起动画变化时刷新。
+  // 相机旋转、缩放和阻尼不会改变阴影，避免每帧重复提交深度 pass。
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
   // 第 11/15 节：像素比上限 —— 桌面 2、移动 1.5、低端设备一律 1.5
   const maxPixelRatio = lowEnd ? 1.5 : isMobile ? UNITS.maxPixelRatioMobile : UNITS.maxPixelRatio;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
@@ -71,6 +75,58 @@ export function createStage(canvas, options) {
   let lastInteraction = performance.now();
   const frameHooks = [];
   let debugView = false;
+  // 调试层懒创建：保存最近一次可创建调试层的 plan，
+  // 只有第一次按 F 时才真正生成 1024² CanvasTexture。
+  let debugPlan = null;
+  let debugAvailable = false;
+
+  // PMREM 环境贴图有界 LRU 缓存。
+  // 天空颜色只由天色档决定，球半径与 PMREM far 同比例缩放，
+  // 因此同一组 sky key 可以安全复用同一份环境贴图。
+  const envCache = new Map();
+  const envCacheLimit = isMobile || lowEnd ? UNITS.envCacheMobile : UNITS.envCacheDesktop;
+
+  function disposeEnvTarget(target) {
+    if (!target) return;
+    if (target.texture) target.texture.dispose();
+    target.dispose();
+  }
+
+  function getEnvTarget(cityPlan, look, span) {
+    const dual = Boolean(look.secondary);
+    const key = dual
+      ? `v1|${cityPlan.sky.key}|${look.secondary.sky.key}`
+      : `v1|${cityPlan.sky.key}`;
+
+    const cached = envCache.get(key);
+    if (cached) {
+      envCache.delete(key);
+      envCache.set(key, cached);
+      return cached;
+    }
+
+    const envScene = new THREE.Scene();
+    const skyClone = state.sky.clone();
+    skyClone.frustumCulled = false;
+    envScene.add(skyClone);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const target = pmrem.fromScene(envScene, 0.04, 0.1, span * UNITS.skyRadiusScale * 1.2);
+    pmrem.dispose();
+
+    envCache.set(key, target);
+    while (envCache.size > envCacheLimit) {
+      const oldestKey = envCache.keys().next().value;
+      if (oldestKey === key) break;
+      const oldest = envCache.get(oldestKey);
+      envCache.delete(oldestKey);
+      disposeEnvTarget(oldest);
+    }
+    return target;
+  }
+
+  function invalidateShadows() {
+    if (renderer.shadowMap.enabled) renderer.shadowMap.needsUpdate = true;
+  }
 
   controls.addEventListener('start', () => {
     controls.autoRotate = false;
@@ -159,6 +215,8 @@ export function createStage(canvas, options) {
     }
     if (state.lights) {
       scene.remove(state.lights.group);
+      // DirectionalLight 的 shadow map 不会随 remove 自动回收
+      disposeLights(state.lights);
       state.lights = null;
     }
     if (state.dust) {
@@ -171,10 +229,10 @@ export function createStage(canvas, options) {
       disposeDebugOverlay(state.debug);
       state.debug = null;
     }
+    debugPlan = null;
+    debugAvailable = false;
     if (state.envTarget) {
-      // 先放掉贴图再放 target：只靠 target.dispose() 在部分 three 版本里不会回收它的 texture
-      if (state.envTarget.texture) state.envTarget.texture.dispose();
-      state.envTarget.dispose();
+      // PMREM target 由有界缓存持有；这里只解绑当前引用，不直接释放
       state.envTarget = null;
       scene.environment = null;
     }
@@ -202,28 +260,26 @@ export function createStage(canvas, options) {
     state.dust =
       look.skipDust === true ? null : createDust(cityPlan, { enabled: !reducedMotion });
     // 双城时那块「地块网格 + 分区标注」不属于任何一座城，直接不做；
-    // 城市墙离屏出图也跳过它，省一张 1024² 贴图和一次 drawcall
-    state.debug = dual || look.skipDebug === true ? null : createDebugOverlay(cityPlan);
-    if (state.debug) state.debug.visible = debugView;
+    // 城市墙离屏出图也跳过它。调试层改为懒创建：
+    // 只有 F 开着或之后第一次按 F 时才真正生成 1024² 贴图。
+    state.debug = null;
+    if (!dual && look.skipDebug !== true) {
+      debugPlan = cityPlan;
+      debugAvailable = true;
+      if (debugView) {
+        state.debug = createDebugOverlay(cityPlan);
+        state.debug.visible = true;
+      }
+    }
 
     scene.add(state.sky, state.ground, state.lights.group);
     if (state.dust) scene.add(state.dust);
     if (state.debug) scene.add(state.debug);
 
-    // 环境贴图也从天空球现做（第 2 节：不加载任何外部 HDR）：
-    // 没有 envMap 的金属在 three 里会直接发黑，雨夜的湿反射也无处可反射。
-    if (state.envTarget) {
-      state.envTarget.dispose();
-      state.envTarget = null;
-    }
-    const envScene = new THREE.Scene();
-    const skyClone = state.sky.clone();
-    skyClone.frustumCulled = false;
-    envScene.add(skyClone);
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    state.envTarget = pmrem.fromScene(envScene, 0.04, 0.1, span * UNITS.skyRadiusScale * 1.2);
+    // 环境贴图仍从程序化天空球生成（不加载任何外部 HDR），
+    // 但按天色 key 进入有界 LRU 缓存，城市墙 12 张图不再逐张重做 PMREM。
+    state.envTarget = getEnvTarget(cityPlan, look, span);
     scene.environment = state.envTarget.texture;
-    pmrem.dispose();
 
     // 雾色与天空的地平线以下同色（见 sky.js），远处地面自然化进天色
     const fogColor = new THREE.Color(palette.fog);
@@ -265,7 +321,13 @@ export function createStage(canvas, options) {
   // F 键的调试底图：地块网格 / 分区色块 / 文字标注。开着时关掉浮尘，守住 drawcall 预算。
   function setDebugView(enabled) {
     debugView = enabled === true;
-    if (state.debug) state.debug.visible = debugView;
+    if (debugView && !state.debug && debugAvailable && debugPlan) {
+      state.debug = createDebugOverlay(debugPlan);
+      state.debug.visible = true;
+      scene.add(state.debug);
+    } else if (state.debug) {
+      state.debug.visible = debugView;
+    }
     if (state.dust) state.dust.visible = !debugView;
   }
 
@@ -274,6 +336,8 @@ export function createStage(canvas, options) {
   }
 
   function renderOnce() {
+    // 导出前强制刷新一次阴影，确保当前帧与实例矩阵完全一致
+    invalidateShadows();
     controls.update();
     renderer.render(scene, camera);
   }
@@ -391,6 +455,7 @@ export function createStage(canvas, options) {
     resize,
     setWireframe,
     setDebugView,
+    invalidateShadows,
     onFrame,
     renderOnce,
     start,

@@ -73,3 +73,16 @@ export function createLights(cityPlan, options) {
 
   return { group, sun, hemi, ambient, rim };
 }
+
+// 释放灯光阴影占用的 GPU 资源。
+// DirectionalLight 的 shadow map 不会随 scene.remove 自动回收，
+// 城市墙与连续重建必须显式调用这里，避免纹理数量持续增长。
+export function disposeLights(lights) {
+  if (!lights || !lights.group) return;
+  lights.group.traverse((object) => {
+    if (!object.isLight || !object.shadow) return;
+    if (object.shadow.dispose) object.shadow.dispose();
+    object.shadow.map = null;
+    object.shadow.mapPass = null;
+  });
+}

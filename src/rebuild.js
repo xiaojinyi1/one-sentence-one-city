@@ -166,6 +166,7 @@ export function createCityController(stage) {
     if (!rise) return;
     const elapsed = (now - rise.startedAt) / 1000;
     let alive = false;
+    let anyDirty = false;
 
     rise.meshes.forEach((bucket) => {
       const { mesh, base, delay, duration, pending } = bucket;
@@ -189,7 +190,12 @@ export function createCityController(stage) {
         elements[offset + 13] *= progress;
       }
       if (dirty) mesh.instanceMatrix.needsUpdate = true;
+      if (dirty) anyDirty = true;
     });
+
+    // 升起期间实例矩阵在变，阴影需要跟着刷新；
+    // 每帧只标记一次，收尾帧也会刷新到 100% 基准矩阵。
+    if (anyDirty && stage.invalidateShadows) stage.invalidateShadows();
 
     if (!alive) rise = null;
   }
@@ -203,6 +209,8 @@ export function createCityController(stage) {
     stage.applyLook(cityPlan, opts.offscreen ? { skipDebug: true, skipDust: true } : undefined);
     current = buildCity(cityPlan, kit);
     stage.scene.add(current.group);
+    // 城市几何与灯光都是新建的，先标记一次阴影刷新
+    if (stage.invalidateShadows) stage.invalidateShadows();
     stage.setRadius(cityPlan.radius, cityPlan.landmark.height);
     planRef = cityPlan;
     // 城市墙要的是一张静止的画面，不需要升起动画
@@ -239,6 +247,8 @@ export function createCityController(stage) {
     currentB = buildCity(planB, kitB);
     currentB.group.position.x = offsetB;
     stage.scene.add(current.group, currentB.group);
+    // 两城偏移都落定后再统一刷新阴影，避免用旧位置生成深度图
+    if (stage.invalidateShadows) stage.invalidateShadows();
 
     // 两城各有自己的地标与光柱（buildCity 各建各的 PointLight），这里不做任何合并
     stage.setRadius(span, 0, true);
